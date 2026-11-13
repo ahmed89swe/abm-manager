@@ -34,16 +34,18 @@ service cloud.firestore {
     }
 
     function currentManagerId() {
-      return isManager()
-        ? (('managerId' in currentUserDoc().data &&
-            currentUserDoc().data.managerId is string &&
-            currentUserDoc().data.managerId != '')
-            ? currentUserDoc().data.managerId
-            : request.auth.uid)
-        : (('managerId' in currentUserDoc().data &&
-            currentUserDoc().data.managerId is string)
-            ? currentUserDoc().data.managerId
-            : '');
+      return !hasProfile()
+        ? ''
+        : (isManager()
+            ? (('managerId' in currentUserDoc().data &&
+                currentUserDoc().data.managerId is string &&
+                currentUserDoc().data.managerId != '')
+                ? currentUserDoc().data.managerId
+                : request.auth.uid)
+            : (('managerId' in currentUserDoc().data &&
+                currentUserDoc().data.managerId is string)
+                ? currentUserDoc().data.managerId
+                : ''));
     }
 
     function legacyPrimaryManagerUid() {
@@ -138,28 +140,45 @@ service cloud.firestore {
 
     // المحافظات والمواد (معزولة لكل مدير)
     match /governorates/{docId} {
-      allow read: if isLegacyMigrationActive() ||
+      allow get: if isLegacyMigrationActive() ||
+        (isActiveUser() &&
+          (resource == null || resource.data.managerId == currentManagerId()));
+      allow list: if isLegacyMigrationActive() ||
         (isActiveUser() && resource.data.managerId == currentManagerId());
-      allow create, update: if isManager() &&
+      allow create: if isManager() &&
         request.resource.data.managerId == currentManagerId();
+      allow update: if isLegacyMigrationActive() ||
+        (isManager() &&
+          resource.data.managerId == currentManagerId() &&
+          request.resource.data.managerId == currentManagerId());
       allow delete: if isManager() &&
         resource.data.managerId == currentManagerId();
     }
 
     match /materials/{docId} {
-      allow read: if isLegacyMigrationActive() ||
+      allow get: if isLegacyMigrationActive() ||
+        (isActiveUser() &&
+          (resource == null || resource.data.managerId == currentManagerId()));
+      allow list: if isLegacyMigrationActive() ||
         (isActiveUser() && resource.data.managerId == currentManagerId());
-      allow create, update: if isManager() &&
+      allow create: if isManager() &&
         request.resource.data.managerId == currentManagerId();
+      allow update: if isLegacyMigrationActive() ||
+        (isManager() &&
+          resource.data.managerId == currentManagerId() &&
+          request.resource.data.managerId == currentManagerId());
       allow delete: if isManager() &&
         resource.data.managerId == currentManagerId();
     }
 
     // الصناديق الشهرية العامة للمدير فقط (سرية تامة ومعزولة لكل مدير)
     match /manager_monthly_boxes/{monthId} {
-      allow read: if isLegacyMigrationActive() ||
+      allow get: if isLegacyMigrationActive() ||
+        (isManager() &&
+          (resource == null || resource.data.managerId == currentManagerId()));
+      allow list: if isLegacyMigrationActive() ||
         (isManager() && resource.data.managerId == currentManagerId());
-      allow create, update: if
+      allow create: if
         (isManager() && (
           request.resource.data.managerId == currentManagerId() ||
           isLegacyMigrationActive()
@@ -171,14 +190,30 @@ service cloud.firestore {
             'totalCompanyTopUps', 'totalInvoiceDeductions',
             'totalExpenseDeductions', 'currentBalance', 'updatedAt'
           ]));
+      allow update: if
+        isLegacyMigrationActive() ||
+        (isManager() &&
+          resource.data.managerId == currentManagerId() &&
+          request.resource.data.managerId == currentManagerId()) ||
+        (isDelegate() &&
+          resource.data.managerId == currentManagerId() &&
+          request.resource.data.managerId == currentManagerId() &&
+          request.resource.data.keys().hasOnly([
+            'managerId', 'monthKey', 'year', 'month',
+            'totalCompanyTopUps', 'totalInvoiceDeductions',
+            'totalExpenseDeductions', 'currentBalance', 'updatedAt'
+          ]));
       allow delete: if isLegacyMigrationActive();
     }
 
     // الصناديق الشهرية الفرعية للمحافظات (للمدير فقط ومعزولة لكل مدير)
     match /governorate_monthly_boxes/{govMonthId} {
-      allow read: if isLegacyMigrationActive() ||
+      allow get: if isLegacyMigrationActive() ||
+        (isManager() &&
+          (resource == null || resource.data.managerId == currentManagerId()));
+      allow list: if isLegacyMigrationActive() ||
         (isManager() && resource.data.managerId == currentManagerId());
-      allow create, update: if
+      allow create: if
         (isManager() && (
           request.resource.data.managerId == currentManagerId() ||
           isLegacyMigrationActive()
@@ -191,12 +226,29 @@ service cloud.firestore {
             'year', 'month', 'totalTopUps', 'totalInvoiceDeductions',
             'totalExpenseDeductions', 'currentBalance', 'updatedAt'
           ]));
+      allow update: if
+        isLegacyMigrationActive() ||
+        (isManager() &&
+          resource.data.managerId == currentManagerId() &&
+          request.resource.data.managerId == currentManagerId()) ||
+        (isDelegate() &&
+          resource.data.managerId == currentManagerId() &&
+          request.resource.data.managerId == currentManagerId() &&
+          request.resource.data.governorateId == currentUserDoc().data.governorateId &&
+          request.resource.data.keys().hasOnly([
+            'managerId', 'governorateId', 'governorateName', 'monthKey',
+            'year', 'month', 'totalTopUps', 'totalInvoiceDeductions',
+            'totalExpenseDeductions', 'currentBalance', 'updatedAt'
+          ]));
       allow delete: if isLegacyMigrationActive();
     }
 
     // حركات الصناديق المالية (للمدير فقط ومعزولة + السماح بتعديل التعبئة من الشركة)
     match /box_transactions/{txId} {
-      allow read: if isLegacyMigrationActive() ||
+      allow get: if isLegacyMigrationActive() ||
+        (isManager() &&
+          (resource == null || resource.data.managerId == currentManagerId()));
+      allow list: if isLegacyMigrationActive() ||
         (isManager() && resource.data.managerId == currentManagerId());
       allow create: if isActiveUser() &&
         request.resource.data.managerId == currentManagerId() &&
@@ -218,7 +270,18 @@ service cloud.firestore {
 
     // الفواتير (معزولة بالكامل لكل مدير وفريقه)
     match /invoices/{invoiceId} {
-      allow read: if isLegacyMigrationActive() ||
+      allow get: if isLegacyMigrationActive() ||
+        (isManager() &&
+          (resource == null || resource.data.managerId == currentManagerId())) ||
+        (isDelegate() &&
+          (resource == null || (
+            resource.data.managerId == currentManagerId() &&
+            (resource.data.createdByUid == request.auth.uid ||
+              (resource.data.governorateId == currentUserDoc().data.governorateId &&
+                (resource.data.assignmentType == 'all_gov_delegates' ||
+                  resource.data.assignedDelegateId == request.auth.uid))))));
+
+      allow list: if isLegacyMigrationActive() ||
         (isManager() && resource.data.managerId == currentManagerId()) ||
         (isDelegate() &&
           resource.data.managerId == currentManagerId() &&
@@ -260,7 +323,14 @@ service cloud.firestore {
 
     // المصاريف الشخصية (معزولة لكل مدير وفريقه)
     match /personal_expenses/{expenseId} {
-      allow read: if isLegacyMigrationActive() ||
+      allow get: if isLegacyMigrationActive() ||
+        (isManager() &&
+          (resource == null || resource.data.managerId == currentManagerId())) ||
+        (isDelegate() &&
+          (resource == null || (
+            resource.data.managerId == currentManagerId() &&
+            resource.data.userId == request.auth.uid)));
+      allow list: if isLegacyMigrationActive() ||
         (isManager() && resource.data.managerId == currentManagerId()) ||
         (isDelegate() &&
           resource.data.managerId == currentManagerId() &&
@@ -276,7 +346,14 @@ service cloud.firestore {
 
     // سجل العمليات (معزول لكل مدير وفريقه)
     match /audit_logs/{logId} {
-      allow read: if isLegacyMigrationActive() ||
+      allow get: if isLegacyMigrationActive() ||
+        (isManager() &&
+          (resource == null || resource.data.managerId == currentManagerId())) ||
+        (isDelegate() &&
+          (resource == null || (
+            resource.data.managerId == currentManagerId() &&
+            resource.data.actorUid == request.auth.uid)));
+      allow list: if isLegacyMigrationActive() ||
         (isManager() && resource.data.managerId == currentManagerId()) ||
         (isDelegate() &&
           resource.data.managerId == currentManagerId() &&
@@ -293,7 +370,14 @@ service cloud.firestore {
 
     // الإشعارات السحابية (معزولة لكل مدير وفريقه)
     match /notifications/{notifId} {
-      allow read: if isLegacyMigrationActive() ||
+      allow get: if isLegacyMigrationActive() ||
+        (isManager() &&
+          (resource == null || resource.data.managerId == currentManagerId())) ||
+        (isDelegate() &&
+          (resource == null || (
+            resource.data.managerId == currentManagerId() &&
+            resource.data.audienceTags.hasAny(delegateAudienceTags()))));
+      allow list: if isLegacyMigrationActive() ||
         (isManager() && resource.data.managerId == currentManagerId()) ||
         (isDelegate() &&
           resource.data.managerId == currentManagerId() &&
