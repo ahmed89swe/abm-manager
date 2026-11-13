@@ -32,6 +32,7 @@ class GovernorateMonthDetailScreen extends ConsumerStatefulWidget {
 class _GovernorateMonthDetailScreenState
     extends ConsumerState<GovernorateMonthDetailScreen> {
   String _selectedGroupFilter = 'all';
+  String _statusFilter = 'all'; // all | unpaid | paid
 
   @override
   Widget build(BuildContext context) {
@@ -59,13 +60,22 @@ class _GovernorateMonthDetailScreenState
         .where((d) => d.governorateId == widget.governorate.id)
         .toList();
 
-    final monthInvoices = allInvoices
+    final rawMonthInvoices = allInvoices
         .where(
           (inv) =>
               inv.governorateId == widget.governorate.id &&
-              inv.invoiceMonthKey == widget.monthKey,
+              inv.effectiveMonthKey == widget.monthKey,
         )
         .toList();
+
+    final paidCount = rawMonthInvoices.where((i) => i.isPaid).length;
+    final unpaidCount = rawMonthInvoices.where((i) => !i.isPaid).length;
+
+    final monthInvoices = rawMonthInvoices.where((inv) {
+      if (_statusFilter == 'paid') return inv.isPaid;
+      if (_statusFilter == 'unpaid') return !inv.isPaid;
+      return true;
+    }).toList();
 
     // تجميع الفواتير حسب المندوب أو فواتير المدير/المشتركة
     final Map<String, List<InvoiceModel>> grouped = {};
@@ -154,6 +164,32 @@ class _GovernorateMonthDetailScreenState
               ),
             ),
             const SizedBox(height: 16),
+
+            // فلتر الحالة (الكل / على الانتظار / مسددة)
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  label: Text('${l10n.tr('all')} (${rawMonthInvoices.length})'),
+                  selected: _statusFilter == 'all',
+                  onSelected: (_) => setState(() => _statusFilter = 'all'),
+                ),
+                ChoiceChip(
+                  label: Text(
+                    '${l10n.isAr ? 'على الانتظار / غير مسددة' : 'Pending / Unpaid'} ($unpaidCount)',
+                  ),
+                  selected: _statusFilter == 'unpaid',
+                  onSelected: (_) => setState(() => _statusFilter = 'unpaid'),
+                ),
+                ChoiceChip(
+                  label: Text('${l10n.tr('paid')} ($paidCount)'),
+                  selected: _statusFilter == 'paid',
+                  onSelected: (_) => setState(() => _statusFilter = 'paid'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
 
             // فلتر سريع حسب المندوب
             SingleChildScrollView(

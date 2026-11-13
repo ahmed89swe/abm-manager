@@ -258,14 +258,26 @@ service cloud.firestore {
       allow update: if isLegacyMigrationActive() ||
         (isManager() &&
           resource.data.managerId == currentManagerId() &&
-          resource.data.type == 'company_topup' &&
-          request.resource.data.type == 'company_topup' &&
-          request.resource.data.managerId == currentManagerId() &&
-          request.resource.data.amount is number &&
-          request.resource.data.amount > 0 &&
-          request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['monthKey', 'amount', 'notes', 'editedByUid', 'editedByName', 'updatedAt']));
-      allow delete: if false;
+          (
+            (resource.data.type == 'company_topup' &&
+              request.resource.data.type == 'company_topup' &&
+              request.resource.data.managerId == currentManagerId() &&
+              request.resource.data.amount is number &&
+              request.resource.data.amount > 0 &&
+              request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['monthKey', 'amount', 'notes', 'editedByUid', 'editedByName', 'updatedAt'])) ||
+            (resource.data.type == 'personal_expense' &&
+              request.resource.data.type == 'personal_expense' &&
+              request.resource.data.managerId == currentManagerId() &&
+              request.resource.data.amount is number &&
+              request.resource.data.amount > 0 &&
+              request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['monthKey', 'amount', 'governorateId', 'governorateName', 'notes', 'editedByUid', 'editedByName', 'updatedAt']))
+          ));
+      allow delete: if isLegacyMigrationActive() ||
+        (isManager() &&
+          resource.data.managerId == currentManagerId() &&
+          resource.data.type == 'personal_expense');
     }
 
     // الفواتير (معزولة بالكامل لكل مدير وفريقه)
@@ -340,8 +352,24 @@ service cloud.firestore {
         request.resource.data.userId == request.auth.uid &&
         request.resource.data.amount is number &&
         request.resource.data.amount > 0;
-      allow update: if isLegacyMigrationActive();
-      allow delete: if false;
+      allow update: if isLegacyMigrationActive() ||
+        (isManager() &&
+          resource.data.managerId == currentManagerId() &&
+          request.resource.data.managerId == currentManagerId() &&
+          request.resource.data.userId == resource.data.userId &&
+          request.resource.data.amount is number &&
+          request.resource.data.amount > 0) ||
+        (isActiveUser() &&
+          resource.data.managerId == currentManagerId() &&
+          resource.data.userId == request.auth.uid &&
+          request.resource.data.managerId == resource.data.managerId &&
+          request.resource.data.userId == resource.data.userId &&
+          request.resource.data.amount is number &&
+          request.resource.data.amount > 0 &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['title', 'amount', 'notes', 'receiptImageUrl', 'editedByUid', 'editedByName', 'updatedAt']));
+      allow delete: if isLegacyMigrationActive() ||
+        (isManager() && resource.data.managerId == currentManagerId());
     }
 
     // سجل العمليات (معزول لكل مدير وفريقه)

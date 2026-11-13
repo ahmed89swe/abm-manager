@@ -3,6 +3,7 @@ import 'package:abm_manager/features/version_control/version_check_gate.dart';
 import 'package:abm_manager/models/app_user.dart';
 import 'package:abm_manager/models/invoice_model.dart';
 import 'package:abm_manager/models/monthly_box.dart';
+import 'package:abm_manager/models/personal_expense_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -150,6 +151,84 @@ void main() {
         InvoiceAssignmentType.specificDelegate.firestoreValue,
         'specific_delegate',
       );
+    });
+
+    test('InvoiceModel effectiveMonthKey prioritizes deductedManagerMonthKey when paid', () {
+      final paidJune = InvoiceModel(
+        id: 'inv1',
+        invoiceNumber: 'INV-101',
+        governorateId: 'baghdad',
+        governorateName: 'بغداد',
+        doctorName: 'Dr. Ali',
+        items: const [],
+        totalAmount: 100000,
+        isPricePending: false,
+        status: InvoiceStatus.paid,
+        assignmentType: InvoiceAssignmentType.allGovernorateDelegates,
+        createdByUid: 'm1',
+        createdByName: 'Manager',
+        createdByRole: 'manager',
+        invoiceDate: DateTime(2026, 11, 13),
+        invoiceMonthKey: '2026-11',
+        deductedManagerMonthKey: '2026-06',
+      );
+      final unpaidNov = InvoiceModel(
+        id: 'inv2',
+        invoiceNumber: 'INV-102',
+        governorateId: 'baghdad',
+        governorateName: 'بغداد',
+        doctorName: 'Dr. Sara',
+        items: const [],
+        totalAmount: 50000,
+        isPricePending: false,
+        status: InvoiceStatus.unpaid,
+        assignmentType: InvoiceAssignmentType.allGovernorateDelegates,
+        createdByUid: 'm1',
+        createdByName: 'Manager',
+        createdByRole: 'manager',
+        invoiceDate: DateTime(2026, 11, 13),
+        invoiceMonthKey: '2026-11',
+      );
+      expect(paidJune.effectiveMonthKey, '2026-06');
+      expect(unpaidNov.effectiveMonthKey, '2026-11');
+    });
+
+    test('PersonalExpenseModel serializes governorateName and edited state cleanly', () {
+      final original = PersonalExpenseModel(
+        id: 'exp1',
+        managerId: 'm1',
+        userId: 'm1',
+        userName: 'Manager',
+        userRole: 'manager',
+        governorateId: 'baghdad',
+        governorateName: 'بغداد',
+        amount: 115000,
+        title: 'نقل',
+        notes: 'شحن',
+        expenseDate: DateTime(2026, 6, 10),
+        monthKey: '2026-06',
+        deductedManagerMonthKey: '2026-06',
+      );
+      expect(original.isEdited, isFalse);
+      final map = original.toMap();
+      expect(map['governorateName'], 'بغداد');
+      expect(map['deductedManagerMonthKey'], '2026-06');
+
+      final parsedEdited = PersonalExpenseModel.fromMap({
+        'managerId': 'm1',
+        'userId': 'm1',
+        'userName': 'Manager',
+        'userRole': 'manager',
+        'governorateId': 'baghdad',
+        'governorateName': 'بغداد',
+        'amount': 115000,
+        'title': 'نقل',
+        'monthKey': '2026-06',
+        'editedByUid': 'm1',
+        'editedByName': 'Manager',
+      }, 'exp1');
+      expect(parsedEdited.isEdited, isTrue);
+      expect(parsedEdited.governorateName, 'بغداد');
     });
   });
 }

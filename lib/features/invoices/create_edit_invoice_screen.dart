@@ -567,6 +567,7 @@ class _CreateEditInvoiceScreenState
                           if (user.isManager) ...[
                             const SizedBox(height: 8),
                             DropdownButtonFormField<String>(
+                              key: ValueKey('inv_deduct_$_deductMonthKey'),
                               initialValue: _deductMonthKey,
                               isExpanded: true,
                               decoration: InputDecoration(

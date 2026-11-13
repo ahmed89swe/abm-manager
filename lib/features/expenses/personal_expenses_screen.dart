@@ -7,6 +7,7 @@ import '../../core/services/server_time_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../models/app_user.dart';
+import '../../models/personal_expense_model.dart';
 import '../../providers/app_providers.dart';
 import '../../services/receipt_storage_service.dart';
 import '../../widgets/common_widgets.dart';
@@ -33,6 +34,7 @@ class _PersonalExpensesScreenState
 
     final expensesAsync = ref.watch(personalExpensesProvider);
     final delegates = ref.watch(delegatesProvider).value ?? const [];
+    final governorates = ref.watch(governoratesProvider).value ?? const [];
     var expenses = expensesAsync.value ?? const [];
 
     if (user.isManager && _filterUserId != null) {
@@ -106,38 +108,52 @@ class _PersonalExpensesScreenState
                         ),
                       ],
                     ),
-                    if (user.isManager && delegates.isNotEmpty)
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(
-                          minWidth: 200,
-                          maxWidth: 280,
-                        ),
-                        child: DropdownButtonFormField<String?>(
-                          initialValue: _filterUserId,
-                          isExpanded: true,
-                          decoration: InputDecoration(
-                            labelText: l10n.tr('filter'),
-                            isDense: true,
-                          ),
-                          items: [
-                            DropdownMenuItem<String?>(
-                              value: null,
-                              child: Text(l10n.tr('all')),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        if (user.isManager && delegates.isNotEmpty)
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              minWidth: 180,
+                              maxWidth: 260,
                             ),
-                            DropdownMenuItem<String?>(
-                              value: user.uid,
-                              child: Text(user.name),
-                            ),
-                            ...delegates.map(
-                              (d) => DropdownMenuItem<String?>(
-                                value: d.uid,
-                                child: Text(d.name),
+                            child: DropdownButtonFormField<String?>(
+                              key: ValueKey('exp_filter_$_filterUserId'),
+                              initialValue: _filterUserId,
+                              isExpanded: true,
+                              decoration: InputDecoration(
+                                labelText: l10n.tr('filter'),
+                                isDense: true,
                               ),
+                              items: [
+                                DropdownMenuItem<String?>(
+                                  value: null,
+                                  child: Text(l10n.tr('all')),
+                                ),
+                                DropdownMenuItem<String?>(
+                                  value: user.uid,
+                                  child: Text(user.name),
+                                ),
+                                ...delegates.map(
+                                  (d) => DropdownMenuItem<String?>(
+                                    value: d.uid,
+                                    child: Text(d.name),
+                                  ),
+                                ),
+                              ],
+                              onChanged: (v) =>
+                                  setState(() => _filterUserId = v),
                             ),
-                          ],
-                          onChanged: (v) => setState(() => _filterUserId = v),
+                          ),
+                        FilledButton.tonalIcon(
+                          onPressed: () => _openExpenseDialog(user),
+                          icon: const Icon(Icons.add),
+                          label: Text(l10n.tr('add_personal_expense')),
                         ),
-                      ),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -158,68 +174,156 @@ class _PersonalExpensesScreenState
                 maxColumns: 2,
                 twoColumnsBreakpoint: 720,
                 children: expenses.map((exp) {
+                  final canEdit = user.isManager || exp.userId == user.uid;
+                  final deductMonth =
+                      (exp.deductedManagerMonthKey ?? '').isNotEmpty
+                          ? exp.deductedManagerMonthKey!
+                          : exp.monthKey;
+                  final govName = (exp.governorateName ?? '').isNotEmpty
+                      ? exp.governorateName!
+                      : governorates
+                          .where((g) => g.id == exp.governorateId)
+                          .map((g) => g.displayName(l10n.isAr))
+                          .firstOrNull;
                   return Card(
                     margin: EdgeInsets.zero,
                     child: Padding(
                       padding: const EdgeInsets.all(14),
-                      child: Row(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          CircleAvatar(
-                            backgroundColor:
-                                AppTheme.dangerColor.withValues(alpha: 0.12),
-                            child: const Icon(
-                              Icons.receipt_outlined,
-                              color: AppTheme.dangerColor,
-                            ),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              CircleAvatar(
+                                backgroundColor: AppTheme.dangerColor
+                                    .withValues(alpha: 0.12),
+                                child: const Icon(
+                                  Icons.receipt_outlined,
+                                  color: AppTheme.dangerColor,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 4,
+                                      crossAxisAlignment:
+                                          WrapCrossAlignment.center,
+                                      children: [
+                                        Text(
+                                          exp.title,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 15,
+                                          ),
+                                        ),
+                                        if (exp.isEdited)
+                                          StatusBadge(
+                                            label: l10n.tr('edited_label'),
+                                            color: AppTheme.warningColor,
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      '${exp.userName} • ${AppFormatters.formatDate(exp.expenseDate)}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall,
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      [
+                                        if (deductMonth.isNotEmpty)
+                                          AppFormatters.formatMonthLabel(
+                                            deductMonth,
+                                            isAr: l10n.isAr,
+                                          ),
+                                        if (govName != null &&
+                                            govName.isNotEmpty)
+                                          govName,
+                                      ].join(' • '),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .primary,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                    ),
+                                    if ((exp.notes ?? '').isNotEmpty) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        exp.notes!,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                '-${AppFormatters.formatMoney(exp.amount)}',
+                                style: const TextStyle(
+                                  color: AppTheme.dangerColor,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                          if ((exp.receiptImageUrl ?? '').isNotEmpty ||
+                              canEdit ||
+                              user.isManager) ...[
+                            const SizedBox(height: 6),
+                            const Divider(height: 1),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
                               children: [
-                                Text(
-                                  exp.title,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 15,
+                                if ((exp.receiptImageUrl ?? '').isNotEmpty)
+                                  IconButton(
+                                    tooltip: l10n.tr('view_receipt'),
+                                    icon: const Icon(Icons.image_outlined,
+                                        size: 20),
+                                    onPressed: () => showReceiptImageDialog(
+                                      context,
+                                      exp.receiptImageUrl!,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  '${exp.userName} • ${AppFormatters.formatDate(exp.expenseDate)}',
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                                if ((exp.notes ?? '').isNotEmpty) ...[
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    exp.notes!,
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
+                                if (canEdit)
+                                  IconButton(
+                                    tooltip: l10n.tr('edit_personal_expense'),
+                                    icon: const Icon(Icons.edit_outlined,
+                                        size: 20),
+                                    onPressed: () => _openExpenseDialog(
+                                      user,
+                                      existing: exp,
+                                    ),
                                   ),
-                                ],
+                                if (user.isManager)
+                                  IconButton(
+                                    tooltip: l10n.tr('delete_personal_expense'),
+                                    icon: const Icon(
+                                      Icons.delete_outline,
+                                      size: 20,
+                                      color: AppTheme.dangerColor,
+                                    ),
+                                    onPressed: () =>
+                                        _confirmDeleteExpense(user, exp),
+                                  ),
                               ],
                             ),
-                          ),
-                          if ((exp.receiptImageUrl ?? '').isNotEmpty)
-                            IconButton(
-                              tooltip: l10n.tr('view_receipt'),
-                              icon: const Icon(Icons.image_outlined),
-                              onPressed: () => showReceiptImageDialog(
-                                context,
-                                exp.receiptImageUrl!,
-                              ),
-                            ),
-                          const SizedBox(width: 4),
-                          Text(
-                            '-${AppFormatters.formatMoney(exp.amount)}',
-                            style: const TextStyle(
-                              color: AppTheme.dangerColor,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
-                            ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
@@ -230,41 +334,115 @@ class _PersonalExpensesScreenState
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openAddExpenseDialog(user),
+        onPressed: () => _openExpenseDialog(user),
         icon: const Icon(Icons.add),
         label: Text(l10n.tr('add_personal_expense')),
       ),
     );
   }
 
-  void _openAddExpenseDialog(AppUser user) {
+  Future<void> _confirmDeleteExpense(
+    AppUser user,
+    PersonalExpenseModel exp,
+  ) async {
     final l10n = AppLocalizations.of(context);
-    final titleCtrl = TextEditingController();
-    final amountCtrl = TextEditingController();
-    final notesCtrl = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.tr('delete_personal_expense')),
+        content: Text(l10n.tr('delete_expense_confirm')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.tr('cancel')),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.dangerColor,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l10n.tr('delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await ref.read(expensesRepositoryProvider).deletePersonalExpense(
+            actor: user,
+            expense: exp,
+          );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$e')),
+      );
+    }
+  }
+
+  void _openExpenseDialog(
+    AppUser user, {
+    PersonalExpenseModel? existing,
+  }) {
+    final l10n = AppLocalizations.of(context);
+    final isEdit = existing != null;
+    final titleCtrl = TextEditingController(text: existing?.title ?? '');
+    final amountCtrl = TextEditingController(
+      text: existing != null
+          ? (existing.amount.truncateToDouble() == existing.amount
+              ? existing.amount.toStringAsFixed(0)
+              : existing.amount.toStringAsFixed(2))
+          : '',
+    );
+    final notesCtrl = TextEditingController(text: existing?.notes ?? '');
     final formKey = GlobalKey<FormState>();
 
     final now = DateTime.now();
     final boxes = user.isManager
         ? (ref.read(monthlyBoxesProvider).value ?? const [])
         : const [];
+    final governorates = user.isManager
+        ? (ref.read(governoratesProvider).value ?? const [])
+        : const [];
+
+    final initialMonth =
+        (existing?.deductedManagerMonthKey ?? '').isNotEmpty
+            ? existing!.deductedManagerMonthKey!
+            : (existing != null && existing.monthKey.isNotEmpty
+                ? existing.monthKey
+                : ServerTimeService.toMonthKey(now));
+
     final monthOptions = <String>{
+      initialMonth,
       ...boxes.map((b) => b.monthKey),
       for (int i = 0; i < 12; i++)
         ServerTimeService.toMonthKey(DateTime(now.year, now.month - i, 1)),
     }.toList()
       ..sort((a, b) => b.compareTo(a));
 
-    String selectedMonth = monthOptions.first;
-    DateTime selectedDate = now;
+    String selectedMonth = initialMonth;
+    DateTime selectedDate = existing?.expenseDate ?? now;
+    String? selectedGovId = (existing?.governorateId ?? '').isNotEmpty
+        ? existing!.governorateId
+        : null;
+    final knownGovIds = governorates.map((g) => g.id).toSet();
+    if (selectedGovId != null && !knownGovIds.contains(selectedGovId)) {
+      selectedGovId = null;
+    }
+
     PickedImageData? receiptImage;
+    bool removeExistingReceipt = false;
     bool busy = false;
 
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setState) => AlertDialog(
-          title: Text(l10n.tr('add_personal_expense')),
+          title: Text(
+            isEdit
+                ? l10n.tr('edit_personal_expense')
+                : l10n.tr('add_personal_expense'),
+          ),
           content: ConstrainedBox(
             constraints: const BoxConstraints(minWidth: 320, maxWidth: 460),
             child: Form(
@@ -319,7 +497,8 @@ class _PersonalExpensesScreenState
                                 selectedMonth =
                                     ServerTimeService.toMonthKey(picked);
                                 if (!monthOptions.contains(selectedMonth)) {
-                                  monthOptions.insert(0, selectedMonth);
+                                  monthOptions.add(selectedMonth);
+                                  monthOptions.sort((a, b) => b.compareTo(a));
                                 }
                               });
                             }
@@ -328,6 +507,7 @@ class _PersonalExpensesScreenState
                         ),
                       ),
                       DropdownButtonFormField<String>(
+                        key: ValueKey('expense_month_$selectedMonth'),
                         initialValue: selectedMonth,
                         isExpanded: true,
                         decoration: InputDecoration(
@@ -351,6 +531,28 @@ class _PersonalExpensesScreenState
                         },
                       ),
                       const SizedBox(height: 10),
+                      DropdownButtonFormField<String?>(
+                        key: ValueKey('expense_gov_$selectedGovId'),
+                        initialValue: selectedGovId,
+                        isExpanded: true,
+                        decoration: InputDecoration(
+                          labelText: l10n.tr('governorate'),
+                        ),
+                        items: [
+                          DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text(l10n.tr('general_expense_no_gov')),
+                          ),
+                          ...governorates.map(
+                            (g) => DropdownMenuItem<String?>(
+                              value: g.id,
+                              child: Text(g.displayName(l10n.isAr)),
+                            ),
+                          ),
+                        ],
+                        onChanged: (v) => setState(() => selectedGovId = v),
+                      ),
+                      const SizedBox(height: 10),
                     ],
                     TextFormField(
                       controller: notesCtrl,
@@ -365,7 +567,12 @@ class _PersonalExpensesScreenState
                               onPressed: () async {
                                 final f = await ReceiptStorageService.instance
                                     .pickImage(source: ImageSource.camera);
-                                if (f != null) setState(() => receiptImage = f);
+                                if (f != null) {
+                                  setState(() {
+                                    receiptImage = f;
+                                    removeExistingReceipt = false;
+                                  });
+                                }
                               },
                               icon: const Icon(Icons.camera_alt_outlined,
                                   size: 18),
@@ -379,7 +586,12 @@ class _PersonalExpensesScreenState
                             onPressed: () async {
                               final f = await ReceiptStorageService.instance
                                   .pickImage(source: ImageSource.gallery);
-                              if (f != null) setState(() => receiptImage = f);
+                              if (f != null) {
+                                setState(() {
+                                  receiptImage = f;
+                                  removeExistingReceipt = false;
+                                });
+                              }
                             },
                             icon: const Icon(Icons.photo_library_outlined,
                                 size: 18),
@@ -400,6 +612,40 @@ class _PersonalExpensesScreenState
                             fit: BoxFit.cover,
                           ),
                         ),
+                      )
+                    else if (isEdit &&
+                        (existing.receiptImageUrl ?? '').isNotEmpty &&
+                        !removeExistingReceipt)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            TextButton.icon(
+                              onPressed: () => showReceiptImageDialog(
+                                ctx,
+                                existing.receiptImageUrl!,
+                              ),
+                              icon: const Icon(Icons.image_outlined, size: 18),
+                              label: Text(l10n.tr('view_receipt')),
+                            ),
+                            TextButton.icon(
+                              onPressed: () => setState(
+                                  () => removeExistingReceipt = true),
+                              icon: const Icon(
+                                Icons.close,
+                                size: 18,
+                                color: AppTheme.dangerColor,
+                              ),
+                              label: Text(
+                                l10n.tr('delete'),
+                                style: const TextStyle(
+                                  color: AppTheme.dangerColor,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                   ],
                 ),
@@ -417,20 +663,49 @@ class _PersonalExpensesScreenState
                   : () async {
                       if (!formKey.currentState!.validate()) return;
                       setState(() => busy = true);
+                      final selectedGovName = selectedGovId == null
+                          ? null
+                          : governorates
+                              .where((g) => g.id == selectedGovId)
+                              .map((g) => g.displayName(l10n.isAr))
+                              .firstOrNull;
                       try {
-                        await ref
-                            .read(expensesRepositoryProvider)
-                            .addPersonalExpense(
-                              actor: user,
-                              amount: double.parse(amountCtrl.text.trim()),
-                              title: titleCtrl.text,
-                              notes: notesCtrl.text,
-                              managerSelectedDate:
-                                  user.isManager ? selectedDate : null,
-                              managerDeductMonthKey:
-                                  user.isManager ? selectedMonth : null,
-                              receiptImage: receiptImage,
-                            );
+                        final repo = ref.read(expensesRepositoryProvider);
+                        if (isEdit) {
+                          await repo.editPersonalExpense(
+                            actor: user,
+                            original: existing,
+                            newAmount: double.parse(amountCtrl.text.trim()),
+                            title: titleCtrl.text,
+                            notes: notesCtrl.text,
+                            managerSelectedDate:
+                                user.isManager ? selectedDate : null,
+                            managerDeductMonthKey:
+                                user.isManager ? selectedMonth : null,
+                            managerGovernorateId:
+                                user.isManager ? selectedGovId : null,
+                            managerGovernorateName:
+                                user.isManager ? selectedGovName : null,
+                            newReceiptImage: receiptImage,
+                            removeReceipt: removeExistingReceipt,
+                          );
+                        } else {
+                          await repo.addPersonalExpense(
+                            actor: user,
+                            amount: double.parse(amountCtrl.text.trim()),
+                            title: titleCtrl.text,
+                            notes: notesCtrl.text,
+                            managerSelectedDate:
+                                user.isManager ? selectedDate : null,
+                            managerDeductMonthKey:
+                                user.isManager ? selectedMonth : null,
+                            managerGovernorateId:
+                                user.isManager ? selectedGovId : null,
+                            managerGovernorateName:
+                                user.isManager ? selectedGovName : null,
+                            receiptImage: receiptImage,
+                          );
+                        }
                         if (ctx.mounted) Navigator.pop(ctx);
                       } catch (e) {
                         if (ctx.mounted) {

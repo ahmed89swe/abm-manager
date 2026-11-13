@@ -38,6 +38,7 @@ class GovernorateMonthsScreen extends ConsumerWidget {
       ...boxes.map((b) => b.monthKey),
       ...thisGovSubBoxes.map((b) => b.monthKey),
       ...govInvoices.map((i) => i.invoiceMonthKey),
+      ...govInvoices.map((i) => i.effectiveMonthKey),
     }.where((m) => m.isNotEmpty).toList()
       ..sort((a, b) => b.compareTo(a));
 
@@ -65,8 +66,10 @@ class GovernorateMonthsScreen extends ConsumerWidget {
             children: monthKeys.map((monthKey) {
               final parsed = ServerTimeService.parseMonthKey(monthKey);
               final monthInvoices = govInvoices
-                  .where((i) => i.invoiceMonthKey == monthKey)
+                  .where((i) => i.effectiveMonthKey == monthKey)
                   .toList();
+              final paidCount = monthInvoices.where((i) => i.isPaid).length;
+              final unpaidCount = monthInvoices.where((i) => !i.isPaid).length;
               final subBox = thisGovSubBoxes.firstWhere(
                 (b) => b.monthKey == monthKey,
                 orElse: () => GovernorateMonthlyBox.empty(
@@ -105,7 +108,7 @@ class GovernorateMonthsScreen extends ConsumerWidget {
                     ),
                   ),
                   subtitle: Text(
-                    '${parsed.year} • ${l10n.tr('total_invoices_count')}: ${monthInvoices.length}',
+                    '${parsed.year} • ${l10n.tr('total_invoices_count')}: ${monthInvoices.length} (${l10n.tr('paid')}: $paidCount • ${l10n.tr('pending_payment')}: $unpaidCount)',
                   ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,

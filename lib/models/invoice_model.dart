@@ -163,6 +163,13 @@ class InvoiceModel {
 
   bool get isPaid => status == InvoiceStatus.paid;
 
+  /// Effective month key for financial grouping and drill-down:
+  /// uses deductedManagerMonthKey when a paid invoice was deducted from a specific month box.
+  String get effectiveMonthKey =>
+      (isPaid && (deductedManagerMonthKey ?? '').isNotEmpty)
+          ? deductedManagerMonthKey!
+          : invoiceMonthKey;
+
   factory InvoiceModel.fromMap(Map<String, dynamic> map, String id) {
     final rawItems = List<Map<String, dynamic>>.from(map['items'] ?? const []);
     final items = rawItems.map(InvoiceItem.fromMap).toList();

@@ -206,6 +206,13 @@ class AppLocalizations {
     'test_notification_sent': 'تم إرسال الإشعار التجريبي للمتصفح',
     'browser_notif_settings_hint':
         'افتح إعدادات الموقع في المتصفح واسمح بالإشعارات (Notifications -> Allow).',
+    'edit_personal_expense': 'تعديل مصروف شخصي',
+    'delete_personal_expense': 'حذف مصروف',
+    'delete_expense_confirm':
+        'هل أنت متأكد من حذف هذا المصروف؟ سيتم إرجاع المبلغ إلى الصندوق تلقائياً.',
+    'general_expense_no_gov': 'مصروف عام (بدون محافظة)',
+    'pending_payment': 'على الانتظار',
+    'by_governorates': 'حسب المحافظات',
   };
 
   static const Map<String, String> _en = {
@@ -371,6 +378,13 @@ class AppLocalizations {
     'test_notification_sent': 'Test notification sent to browser',
     'browser_notif_settings_hint':
         'Open site settings in your browser and set Notifications to Allow.',
+    'edit_personal_expense': 'Edit Personal Expense',
+    'delete_personal_expense': 'Delete Expense',
+    'delete_expense_confirm':
+        'Are you sure you want to delete this expense? The amount will be restored to the box automatically.',
+    'general_expense_no_gov': 'General Expense (No Governorate)',
+    'pending_payment': 'Pending',
+    'by_governorates': 'By Governorates',
   };
 }
 
