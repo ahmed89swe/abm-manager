@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class PersonalExpenseModel {
   const PersonalExpenseModel({
     required this.id,
+    this.managerId = '',
     required this.userId,
     required this.userName,
     required this.userRole,
@@ -18,6 +19,7 @@ class PersonalExpenseModel {
   });
 
   final String id;
+  final String managerId;
   final String userId;
   final String userName;
   final String userRole; // manager | delegate
@@ -34,6 +36,7 @@ class PersonalExpenseModel {
   factory PersonalExpenseModel.fromMap(Map<String, dynamic> map, String id) {
     return PersonalExpenseModel(
       id: id,
+      managerId: (map['managerId'] ?? '') as String,
       userId: (map['userId'] ?? '') as String,
       userName: (map['userName'] ?? '') as String,
       userRole: (map['userRole'] ?? 'delegate') as String,
@@ -52,6 +55,7 @@ class PersonalExpenseModel {
 
   Map<String, dynamic> toMap() {
     return {
+      if (managerId.isNotEmpty) 'managerId': managerId,
       'userId': userId,
       'userName': userName,
       'userRole': userRole,

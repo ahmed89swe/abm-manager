@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../models/app_user.dart';
 import '../models/audit_log_model.dart';
+import 'web_notification_helper.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -33,13 +34,26 @@ class NotificationService {
 
   final Set<String> _shownNotificationIds = <String>{};
   DateTime _listenerStartedAt = DateTime.now();
+  String? _attachedUid;
   bool _initialized = false;
+
+  bool get isBrowserSupported => kIsWeb && WebNotificationHelper.isSupported;
+
+  String get browserPermissionStatus =>
+      kIsWeb ? WebNotificationHelper.permission : 'granted';
+
+  Future<String> requestBrowserPermission() async {
+    if (!kIsWeb) return 'granted';
+    await WebNotificationHelper.init();
+    return WebNotificationHelper.requestPermission();
+  }
 
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
 
     if (kIsWeb) {
+      await WebNotificationHelper.init();
       return;
     }
 
@@ -79,20 +93,31 @@ class NotificationService {
     }
   }
 
-  /// ربط توكن FCM ومراقبة سحابة الإشعارات الفورية لهذا المستخدم وفق audienceTags
+  /// ربط توكن FCM ومراقبة سحابة الإشعارات الفورية لهذا المستخدم وفق managerId و audienceTags
   Future<void> attachUserListener(AppUser user, {required bool isAr}) async {
     await initialize();
     if (!kIsWeb) {
       await _registerFcmToken(user);
     }
 
+    if (_attachedUid != user.uid) {
+      _shownNotificationIds.clear();
+      _attachedUid = user.uid;
+    }
+
     await _cloudListener?.cancel();
     _listenerStartedAt = DateTime.now().subtract(const Duration(seconds: 2));
+
+    final managerId = user.effectiveManagerId;
+    if (managerId.isEmpty) {
+      return;
+    }
 
     Query<Map<String, dynamic>> query;
     if (user.isManager) {
       query = _firestore
           .collection('notifications')
+          .where('managerId', isEqualTo: managerId)
           .orderBy('createdAt', descending: true)
           .limit(30);
     } else {
@@ -100,10 +125,11 @@ class NotificationService {
         'USER_${user.uid}',
         if (user.governorateId != null && user.governorateId!.isNotEmpty)
           'GOV_${user.governorateId}',
-        'ALL',
+        'ALL_$managerId',
       ];
       query = _firestore
           .collection('notifications')
+          .where('managerId', isEqualTo: managerId)
           .where('audienceTags', arrayContainsAny: tags);
     }
 
@@ -125,13 +151,11 @@ class NotificationService {
 
         _shownNotificationIds.add(notif.id);
         _inAppController.add(notif);
-        if (!kIsWeb) {
-          showLocalNotification(
-            id: notif.id.hashCode,
-            title: isAr ? notif.titleAr : notif.titleEn,
-            body: isAr ? notif.bodyAr : notif.bodyEn,
-          );
-        }
+        showLocalNotification(
+          id: notif.id.hashCode,
+          title: isAr ? notif.titleAr : notif.titleEn,
+          body: isAr ? notif.bodyAr : notif.bodyEn,
+        );
       }
     }, onError: (e) {
       debugPrint('Notification listener error: $e');
@@ -139,6 +163,7 @@ class NotificationService {
   }
 
   Future<void> detachListener() async {
+    _attachedUid = null;
     await _cloudListener?.cancel();
     _cloudListener = null;
     await _registrationSub?.cancel();
@@ -174,7 +199,14 @@ class NotificationService {
     required String title,
     required String body,
   }) async {
-    if (kIsWeb) return;
+    if (kIsWeb) {
+      await WebNotificationHelper.showNotification(
+        title: title,
+        body: body,
+        tag: 'abm-$id',
+      );
+      return;
+    }
     const androidDetails = AndroidNotificationDetails(
       _channelId,
       _channelName,
@@ -190,8 +222,9 @@ class NotificationService {
     );
   }
 
-  /// إرسال إشعار سحابي محدد المستلمين عبر audienceTags
+  /// إرسال إشعار سحابي محدد المستلمين ومعزول لكل مدير عبر managerId و audienceTags
   Future<void> sendCloudNotification({
+    required String managerId,
     required String titleAr,
     required String titleEn,
     required String bodyAr,
@@ -204,6 +237,7 @@ class NotificationService {
     required String createdByUid,
   }) async {
     await _firestore.collection('notifications').add({
+      'managerId': managerId,
       'titleAr': titleAr,
       'titleEn': titleEn,
       'bodyAr': bodyAr,

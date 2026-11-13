@@ -3,12 +3,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class Governorate {
   const Governorate({
     required this.id,
+    this.managerId = '',
     required this.nameAr,
     required this.nameEn,
     this.isActive = true,
   });
 
   final String id;
+  final String managerId;
   final String nameAr;
   final String nameEn;
   final bool isActive;
@@ -18,6 +20,7 @@ class Governorate {
   factory Governorate.fromMap(Map<String, dynamic> map, String id) {
     return Governorate(
       id: id,
+      managerId: (map['managerId'] ?? '') as String,
       nameAr: (map['nameAr'] ?? '') as String,
       nameEn: (map['nameEn'] ?? '') as String,
       isActive: (map['isActive'] ?? true) as bool,
@@ -25,6 +28,7 @@ class Governorate {
   }
 
   Map<String, dynamic> toMap() => {
+        if (managerId.isNotEmpty) 'managerId': managerId,
         'nameAr': nameAr,
         'nameEn': nameEn,
         'isActive': isActive,
@@ -149,6 +153,7 @@ class WarehouseEntity {
 class MaterialEntity {
   const MaterialEntity({
     required this.id,
+    this.managerId = '',
     required this.name,
     this.defaultUnitPrice,
     this.unit = 'علبة',
@@ -156,6 +161,7 @@ class MaterialEntity {
   });
 
   final String id;
+  final String managerId;
   final String name;
   final double? defaultUnitPrice;
   final String unit;
@@ -164,6 +170,7 @@ class MaterialEntity {
   factory MaterialEntity.fromMap(Map<String, dynamic> map, String id) {
     return MaterialEntity(
       id: id,
+      managerId: (map['managerId'] ?? '') as String,
       name: (map['name'] ?? '') as String,
       defaultUnitPrice: map['defaultUnitPrice'] != null
           ? (map['defaultUnitPrice'] as num).toDouble()
@@ -174,6 +181,7 @@ class MaterialEntity {
   }
 
   Map<String, dynamic> toMap() => {
+        if (managerId.isNotEmpty) 'managerId': managerId,
         'name': name,
         'defaultUnitPrice': defaultUnitPrice,
         'unit': unit,

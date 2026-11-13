@@ -20,6 +20,7 @@ class AppUser {
     required this.email,
     required this.phone,
     required this.role,
+    this.managerId,
     this.governorateId,
     this.governorateName,
     this.virtualBoxBalance = 0,
@@ -35,6 +36,7 @@ class AppUser {
   final String email;
   final String phone;
   final UserRole role;
+  final String? managerId;
   final String? governorateId;
   final String? governorateName;
   final double virtualBoxBalance;
@@ -47,6 +49,12 @@ class AppUser {
   bool get isManager => role == UserRole.manager;
   bool get isDelegate => role == UserRole.delegate;
 
+  /// المعرّف العازل لبيانات هذا المدير وفريقه بالكامل
+  String get effectiveManagerId =>
+      (managerId != null && managerId!.isNotEmpty)
+          ? managerId!
+          : (isManager ? uid : '');
+
   Uint8List? get avatarBytes {
     if (avatarBase64 == null || avatarBase64!.isEmpty) return null;
     try {
@@ -57,12 +65,17 @@ class AppUser {
   }
 
   factory AppUser.fromMap(Map<String, dynamic> map, String uid) {
+    final role = UserRole.fromString(map['role'] as String?);
+    final rawManagerId = (map['managerId'] as String?)?.trim();
     return AppUser(
       uid: uid,
       name: (map['name'] ?? '') as String,
       email: (map['email'] ?? '') as String,
       phone: (map['phone'] ?? '') as String,
-      role: UserRole.fromString(map['role'] as String?),
+      role: role,
+      managerId: (rawManagerId != null && rawManagerId.isNotEmpty)
+          ? rawManagerId
+          : (role == UserRole.manager ? uid : null),
       governorateId: map['governorateId'] as String?,
       governorateName: map['governorateName'] as String?,
       virtualBoxBalance: ((map['virtualBoxBalance'] ?? 0) as num).toDouble(),
@@ -81,6 +94,9 @@ class AppUser {
       'email': email,
       'phone': phone,
       'role': role.value,
+      'managerId': (managerId != null && managerId!.isNotEmpty)
+          ? managerId
+          : (isManager ? uid : null),
       'governorateId': governorateId,
       'governorateName': governorateName,
       'virtualBoxBalance': virtualBoxBalance,
@@ -99,6 +115,7 @@ class AppUser {
     String? email,
     String? phone,
     UserRole? role,
+    String? managerId,
     String? governorateId,
     String? governorateName,
     double? virtualBoxBalance,
@@ -113,6 +130,7 @@ class AppUser {
       email: email ?? this.email,
       phone: phone ?? this.phone,
       role: role ?? this.role,
+      managerId: managerId ?? this.managerId,
       governorateId: governorateId ?? this.governorateId,
       governorateName: governorateName ?? this.governorateName,
       virtualBoxBalance: virtualBoxBalance ?? this.virtualBoxBalance,

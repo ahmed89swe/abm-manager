@@ -187,6 +187,25 @@ class AppLocalizations {
     'net_balance': 'الصافي',
     'loading': 'جاري التحميل...',
     'server_time_badge': 'توقيت السيرفر الموثوق',
+    'edit_company_topup': 'تعديل تعبئة من الشركة',
+    'company_topups_history': 'سجل عمليات التعبئة من الشركة',
+    'edited_label': 'معدّل',
+    'setup_new_manager': 'إعداد / تسجيل حساب مدير جديد',
+    'browser_notifications': 'إشعارات المتصفح',
+    'browser_notifications_desc':
+        'تلقي إشعارات فورية على هذا المتصفح عند إضافة أو تسديد الفواتير والتعبئة',
+    'browser_notif_banner':
+        'فعّل إشعارات المتصفح لتصلك التنبيهات الفورية على أي جهاز',
+    'enable_now': 'تفعيل الآن',
+    'notifications_enabled': 'إشعارات المتصفح مفعّلة',
+    'notifications_blocked': 'الإشعارات محظورة من إعدادات المتصفح',
+    'notifications_not_enabled': 'إشعارات المتصفح غير مفعّلة بعد',
+    'notifications_ios_hint':
+        'على iPhone/iPad (iOS 16.4+): أضف الموقع للشاشة الرئيسية (Add to Home Screen) ثم فعّل الإشعارات من هناك.',
+    'test_notification': 'إرسال إشعار تجريبي',
+    'test_notification_sent': 'تم إرسال الإشعار التجريبي للمتصفح',
+    'browser_notif_settings_hint':
+        'افتح إعدادات الموقع في المتصفح واسمح بالإشعارات (Notifications -> Allow).',
   };
 
   static const Map<String, String> _en = {
@@ -333,6 +352,25 @@ class AppLocalizations {
     'net_balance': 'Net Balance',
     'loading': 'Loading...',
     'server_time_badge': 'Trusted Server Time',
+    'edit_company_topup': 'Edit Company Top-Up',
+    'company_topups_history': 'Company Top-Ups History',
+    'edited_label': 'Edited',
+    'setup_new_manager': 'Setup / Register New Manager Account',
+    'browser_notifications': 'Browser Notifications',
+    'browser_notifications_desc':
+        'Receive instant alerts in this browser when invoices, payments, or top-ups happen',
+    'browser_notif_banner':
+        'Enable browser notifications to receive instant alerts on any device',
+    'enable_now': 'Enable Now',
+    'notifications_enabled': 'Browser notifications enabled',
+    'notifications_blocked': 'Notifications are blocked in browser settings',
+    'notifications_not_enabled': 'Browser notifications are not enabled yet',
+    'notifications_ios_hint':
+        'On iPhone/iPad (iOS 16.4+): Add this site to your Home Screen, then enable notifications from there.',
+    'test_notification': 'Send Test Notification',
+    'test_notification_sent': 'Test notification sent to browser',
+    'browser_notif_settings_hint':
+        'Open site settings in your browser and set Notifications to Allow.',
   };
 }
 

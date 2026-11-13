@@ -60,6 +60,18 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
   }
 
   @override
+  void didUpdateWidget(covariant MainShellScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.user.uid != widget.user.uid) {
+      _activeSection =
+          widget.user.isManager ? _ShellSection.boxes : _ShellSection.dashboard;
+      _bootstrapped = false;
+      _liveNotifSub?.cancel();
+      _bootstrapUserSession();
+    }
+  }
+
+  @override
   void dispose() {
     _liveNotifSub?.cancel();
     super.dispose();
@@ -68,6 +80,19 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
   Future<void> _bootstrapUserSession() async {
     if (_bootstrapped) return;
     _bootstrapped = true;
+
+    if (widget.user.isManager) {
+      try {
+        await ref
+            .read(authRepositoryProvider)
+            .ensureManagerWorkspaceMigrated(widget.user);
+      } catch (_) {}
+      try {
+        await ref
+            .read(boxesRepositoryProvider)
+            .ensureCurrentMonthBoxExists(widget.user);
+      } catch (_) {}
+    }
 
     final isAr = ref.read(appPreferencesProvider).locale.languageCode == 'ar';
     await NotificationService.instance.attachUserListener(
@@ -113,12 +138,6 @@ class _MainShellScreenState extends ConsumerState<MainShellScreen> {
         );
       },
     );
-
-    if (widget.user.isManager) {
-      try {
-        await ref.read(boxesRepositoryProvider).ensureCurrentMonthBoxExists();
-      } catch (_) {}
-    }
   }
 
   String _sectionTitle(_ShellSection section, AppLocalizations l10n) {

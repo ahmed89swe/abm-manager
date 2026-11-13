@@ -14,10 +14,17 @@ class InvoicesRepository {
 
   final FirebaseFirestore _firestore;
 
-  /// متابعة الفواتير الحية للمدير أو المندوب (بتوافق كامل مع قواعد Firestore لضمان الظهور الفوري)
+  /// متابعة الفواتير الحية للمدير أو المندوب (بتوافق كامل مع قواعد Firestore لضمان الظهور الفوري وعزل كل مدير)
   Stream<List<InvoiceModel>> watchInvoicesForUser(AppUser user) {
+    final managerId = user.effectiveManagerId;
+    if (managerId.isEmpty) return Stream.value(const []);
+
     if (user.isManager) {
-      return _firestore.collection('invoices').snapshots().map((snap) {
+      return _firestore
+          .collection('invoices')
+          .where('managerId', isEqualTo: managerId)
+          .snapshots()
+          .map((snap) {
         final list = snap.docs
             .map((d) => InvoiceModel.fromMap(d.data(), d.id))
             .toList();
@@ -51,6 +58,7 @@ class InvoicesRepository {
           subs.add(
             _firestore
                 .collection('invoices')
+                .where('managerId', isEqualTo: managerId)
                 .where('governorateId', isEqualTo: govId)
                 .where(
                   'assignmentType',
@@ -72,6 +80,7 @@ class InvoicesRepository {
           subs.add(
             _firestore
                 .collection('invoices')
+                .where('managerId', isEqualTo: managerId)
                 .where('governorateId', isEqualTo: govId)
                 .where('assignedDelegateId', isEqualTo: user.uid)
                 .snapshots()
@@ -90,6 +99,7 @@ class InvoicesRepository {
         subs.add(
           _firestore
               .collection('invoices')
+              .where('managerId', isEqualTo: managerId)
               .where('createdByUid', isEqualTo: user.uid)
               .snapshots()
               .listen(
@@ -121,16 +131,17 @@ class InvoicesRepository {
     String? createdByUid,
     String? createdByRole,
   }) {
+    final managerId = actor.effectiveManagerId;
     if (actor.isDelegate) {
       return {
-        'MANAGERS',
+        'MANAGER_$managerId',
         'USER_${actor.uid}',
         if (assignedDelegateId != null && assignedDelegateId.isNotEmpty)
           'USER_$assignedDelegateId',
       }.toList();
     }
 
-    final tags = <String>{'MANAGERS'};
+    final tags = <String>{'MANAGER_$managerId'};
     if (assignmentType == InvoiceAssignmentType.specificDelegate &&
         assignedDelegateId != null &&
         assignedDelegateId.isNotEmpty) {
@@ -150,16 +161,19 @@ class InvoicesRepository {
 
   void _applyBlindMonthlyDeduction({
     required Transaction tx,
+    required String managerId,
     required String monthKey,
     required double deltaDeduction,
     required double deltaBalance,
   }) {
     final parsed = ServerTimeService.parseMonthKey(monthKey);
-    final monthBoxRef =
-        _firestore.collection('manager_monthly_boxes').doc(monthKey);
+    final monthBoxRef = _firestore
+        .collection('manager_monthly_boxes')
+        .doc(MonthlyBox.docId(managerId, monthKey));
     tx.set(
       monthBoxRef,
       {
+        'managerId': managerId,
         'monthKey': monthKey,
         'year': parsed.year,
         'month': parsed.month,
@@ -175,6 +189,7 @@ class InvoicesRepository {
 
   void _applyBlindGovernorateMonthlyDeduction({
     required Transaction tx,
+    required String managerId,
     required String governorateId,
     required String governorateName,
     required String monthKey,
@@ -182,12 +197,14 @@ class InvoicesRepository {
     required double deltaBalance,
   }) {
     final parsed = ServerTimeService.parseMonthKey(monthKey);
-    final govDocId = GovernorateMonthlyBox.docId(governorateId, monthKey);
+    final govDocId =
+        GovernorateMonthlyBox.docId(managerId, governorateId, monthKey);
     final govBoxRef =
         _firestore.collection('governorate_monthly_boxes').doc(govDocId);
     tx.set(
       govBoxRef,
       {
+        'managerId': managerId,
         'governorateId': governorateId,
         'governorateName': governorateName,
         'monthKey': monthKey,
@@ -264,8 +281,10 @@ class InvoicesRepository {
             : invoiceMonthKey)
         : null;
 
+    final managerId = actor.effectiveManagerId;
     final invoice = InvoiceModel(
       id: invoiceRef.id,
+      managerId: managerId,
       invoiceNumber: invoiceNumber,
       governorateId: governorateId,
       governorateName: governorateName,
@@ -302,10 +321,15 @@ class InvoicesRepository {
     if (!payImmediately) {
       await invoiceRef.set(invoice.toMap(forCreate: true));
     } else {
-      final monthBoxRef =
-          _firestore.collection('manager_monthly_boxes').doc(deductMonthKey!);
+      final monthBoxRef = _firestore
+          .collection('manager_monthly_boxes')
+          .doc(MonthlyBox.docId(managerId, deductMonthKey!));
       final govBoxRef = _firestore.collection('governorate_monthly_boxes').doc(
-            GovernorateMonthlyBox.docId(governorateId, deductMonthKey),
+            GovernorateMonthlyBox.docId(
+              managerId,
+              governorateId,
+              deductMonthKey,
+            ),
           );
       final txRef = _firestore.collection('box_transactions').doc();
       final actorUserRef = _firestore.collection('users').doc(actor.uid);
@@ -327,6 +351,7 @@ class InvoicesRepository {
         if (actor.isManager) {
           if (monthBoxSnap == null || !monthBoxSnap.exists) {
             tx.set(monthBoxRef, {
+              'managerId': managerId,
               'monthKey': deductMonthKey,
               'year': parsedMonth.year,
               'month': parsedMonth.month,
@@ -350,6 +375,7 @@ class InvoicesRepository {
 
           if (govBoxSnap == null || !govBoxSnap.exists) {
             tx.set(govBoxRef, {
+              'managerId': managerId,
               'governorateId': governorateId,
               'governorateName': governorateName,
               'monthKey': deductMonthKey,
@@ -377,12 +403,14 @@ class InvoicesRepository {
         } else {
           _applyBlindMonthlyDeduction(
             tx: tx,
+            managerId: managerId,
             monthKey: deductMonthKey,
             deltaDeduction: totalAmount,
             deltaBalance: -totalAmount,
           );
           _applyBlindGovernorateMonthlyDeduction(
             tx: tx,
+            managerId: managerId,
             governorateId: governorateId,
             governorateName: governorateName,
             monthKey: deductMonthKey,
@@ -403,6 +431,7 @@ class InvoicesRepository {
 
         tx.set(invoiceRef, invoice.toMap(forCreate: true));
         tx.set(txRef, {
+          'managerId': managerId,
           'type': BoxTransactionType.invoicePayment.firestoreValue,
           'monthKey': deductMonthKey,
           'amount': totalAmount,
@@ -453,6 +482,7 @@ class InvoicesRepository {
     ];
 
     await NotificationService.instance.sendCloudNotification(
+      managerId: managerId,
       titleAr: payImmediately ? 'فاتورة جديدة مسددة' : 'فاتورة جديدة',
       titleEn: payImmediately ? 'New Paid Invoice' : 'New Invoice Created',
       bodyAr:
@@ -508,11 +538,17 @@ class InvoicesRepository {
       } catch (_) {}
     }
 
+    final managerId = actor.effectiveManagerId;
     final invoiceRef = _firestore.collection('invoices').doc(invoice.id);
-    final monthBoxRef =
-        _firestore.collection('manager_monthly_boxes').doc(deductMonthKey);
+    final monthBoxRef = _firestore
+        .collection('manager_monthly_boxes')
+        .doc(MonthlyBox.docId(managerId, deductMonthKey));
     final govBoxRef = _firestore.collection('governorate_monthly_boxes').doc(
-          GovernorateMonthlyBox.docId(invoice.governorateId, deductMonthKey),
+          GovernorateMonthlyBox.docId(
+            managerId,
+            invoice.governorateId,
+            deductMonthKey,
+          ),
         );
     final txRef = _firestore.collection('box_transactions').doc();
     final actorRef = _firestore.collection('users').doc(actor.uid);
@@ -539,6 +575,7 @@ class InvoicesRepository {
       if (actor.isManager) {
         if (monthBoxSnap == null || !monthBoxSnap.exists) {
           tx.set(monthBoxRef, {
+            'managerId': managerId,
             'monthKey': deductMonthKey,
             'year': parsedMonth.year,
             'month': parsedMonth.month,
@@ -562,6 +599,7 @@ class InvoicesRepository {
 
         if (govBoxSnap == null || !govBoxSnap.exists) {
           tx.set(govBoxRef, {
+            'managerId': managerId,
             'governorateId': invoice.governorateId,
             'governorateName': invoice.governorateName,
             'monthKey': deductMonthKey,
@@ -588,12 +626,14 @@ class InvoicesRepository {
       } else {
         _applyBlindMonthlyDeduction(
           tx: tx,
+          managerId: managerId,
           monthKey: deductMonthKey,
           deltaDeduction: newTotal,
           deltaBalance: -newTotal,
         );
         _applyBlindGovernorateMonthlyDeduction(
           tx: tx,
+          managerId: managerId,
           governorateId: invoice.governorateId,
           governorateName: invoice.governorateName,
           monthKey: deductMonthKey,
@@ -628,6 +668,7 @@ class InvoicesRepository {
       });
 
       tx.set(txRef, {
+        'managerId': managerId,
         'type': BoxTransactionType.invoicePayment.firestoreValue,
         'monthKey': deductMonthKey,
         'amount': newTotal,
@@ -670,6 +711,7 @@ class InvoicesRepository {
     );
 
     await NotificationService.instance.sendCloudNotification(
+      managerId: managerId,
       titleAr: 'تم تسديد فاتورة',
       titleEn: 'Invoice Paid',
       bodyAr:
@@ -737,6 +779,7 @@ class InvoicesRepository {
             newInvoiceMonthKey)
         : null;
 
+    final managerId = manager.effectiveManagerId;
     final invoiceRef = _firestore.collection('invoices').doc(original.id);
 
     await _firestore.runTransaction((tx) async {
@@ -760,11 +803,12 @@ class InvoicesRepository {
       DocumentSnapshot<Map<String, dynamic>>? oldDelegateSnap;
 
       final oldGovDocId = (wasPaid && oldMonthKey != null)
-          ? GovernorateMonthlyBox.docId(oldGovId, oldMonthKey)
+          ? GovernorateMonthlyBox.docId(managerId, oldGovId, oldMonthKey)
           : null;
       final newGovDocId =
           (newStatus == InvoiceStatus.paid && effectiveNewDeductMonth != null)
               ? GovernorateMonthlyBox.docId(
+                  managerId,
                   governorateId,
                   effectiveNewDeductMonth,
                 )
@@ -772,7 +816,9 @@ class InvoicesRepository {
 
       if (wasPaid && oldMonthKey != null) {
         oldMonthSnap = await tx.get(
-          _firestore.collection('manager_monthly_boxes').doc(oldMonthKey),
+          _firestore
+              .collection('manager_monthly_boxes')
+              .doc(MonthlyBox.docId(managerId, oldMonthKey)),
         );
       }
       if (newStatus == InvoiceStatus.paid && effectiveNewDeductMonth != null) {
@@ -782,7 +828,7 @@ class InvoicesRepository {
           newMonthSnap = await tx.get(
             _firestore
                 .collection('manager_monthly_boxes')
-                .doc(effectiveNewDeductMonth),
+                .doc(MonthlyBox.docId(managerId, effectiveNewDeductMonth)),
           );
         }
       }
@@ -825,8 +871,9 @@ class InvoicesRepository {
         final delta = entry.value;
         if (delta.dedDelta == 0 && delta.balDelta == 0) continue;
 
-        final boxRef =
-            _firestore.collection('manager_monthly_boxes').doc(mKey);
+        final boxRef = _firestore
+            .collection('manager_monthly_boxes')
+            .doc(MonthlyBox.docId(managerId, mKey));
         final snap = mKey == oldMonthKey ? oldMonthSnap : newMonthSnap;
         if (snap != null && snap.exists) {
           final data = snap.data()!;
@@ -841,6 +888,7 @@ class InvoicesRepository {
         } else {
           final parsed = ServerTimeService.parseMonthKey(mKey);
           tx.set(boxRef, {
+            'managerId': managerId,
             'monthKey': mKey,
             'year': parsed.year,
             'month': parsed.month,
@@ -907,6 +955,7 @@ class InvoicesRepository {
         } else {
           final parsed = ServerTimeService.parseMonthKey(delta.mKey);
           tx.set(govRef, {
+            'managerId': managerId,
             'governorateId': delta.govId,
             'governorateName': delta.govName,
             'monthKey': delta.mKey,
@@ -941,6 +990,7 @@ class InvoicesRepository {
       }
 
       tx.update(invoiceRef, {
+        'managerId': managerId,
         'governorateId': governorateId,
         'governorateName': governorateName,
         'assignmentType': assignmentType.firestoreValue,
@@ -987,6 +1037,7 @@ class InvoicesRepository {
           oldGovId != governorateId) {
         final txRef = _firestore.collection('box_transactions').doc();
         tx.set(txRef, {
+          'managerId': managerId,
           'type': BoxTransactionType.invoiceEditAdjustment.firestoreValue,
           'monthKey':
               effectiveNewDeductMonth ?? oldMonthKey ?? newInvoiceMonthKey,
@@ -1031,6 +1082,7 @@ class InvoicesRepository {
     );
 
     await NotificationService.instance.sendCloudNotification(
+      managerId: managerId,
       titleAr: 'تعديل فاتورة',
       titleEn: 'Invoice Edited',
       bodyAr:

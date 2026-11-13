@@ -8,6 +8,7 @@ import '../../core/utils/formatters.dart';
 import '../../models/master_data_models.dart';
 import '../../models/monthly_box.dart';
 import '../../providers/app_providers.dart';
+import '../../widgets/browser_notification_widgets.dart';
 import '../../widgets/common_widgets.dart';
 import '../../widgets/month_year_picker.dart';
 import 'monthly_box_detail_screen.dart';
@@ -28,6 +29,10 @@ class _ManagerBoxesScreenState extends ConsumerState<ManagerBoxesScreen> {
     final boxesAsync = ref.watch(monthlyBoxesProvider);
     final govBoxes =
         ref.watch(governorateMonthlyBoxesProvider).value ?? const [];
+    final allTx = ref.watch(allBoxTransactionsProvider).value ?? const [];
+    final companyTopUps = allTx
+        .where((t) => t.type == BoxTransactionType.companyTopUp)
+        .toList();
     final governorates = ref.watch(governoratesProvider).value ?? const [];
     final currentMonthKey = ref.watch(currentMonthKeyProvider).value;
 
@@ -54,13 +59,19 @@ class _ManagerBoxesScreenState extends ConsumerState<ManagerBoxesScreen> {
     return Scaffold(
       body: RefreshIndicator(
         onRefresh: () async {
-          await ref.read(boxesRepositoryProvider).ensureCurrentMonthBoxExists();
+          final user = ref.read(currentUserProfileProvider).value;
+          if (user != null) {
+            await ref
+                .read(boxesRepositoryProvider)
+                .ensureCurrentMonthBoxExists(user);
+          }
         },
         child: ResponsivePageContainer(
           maxWidth: 1240,
           child: ListView(
             padding: ResponsiveBreakpoints.pagePadding(context),
             children: [
+              const BrowserNotificationBanner(),
               BalanceHeroCard(
                 title: l10n.tr('general_box'),
                 subtitle: l10n.tr('general_box_desc'),
@@ -183,6 +194,86 @@ class _ManagerBoxesScreenState extends ConsumerState<ManagerBoxesScreen> {
                         )
                         .toList(),
                   ),
+                if (companyTopUps.isNotEmpty) ...[
+                  const SizedBox(height: 24),
+                  Text(
+                    l10n.tr('company_topups_history'),
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 12),
+                  ResponsiveCardGrid(
+                    maxColumns: 2,
+                    twoColumnsBreakpoint: 760,
+                    children: companyTopUps.map((tx) {
+                      return Card(
+                        margin: EdgeInsets.zero,
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: AppTheme.successColor
+                                .withValues(alpha: 0.12),
+                            child: const Icon(
+                              Icons.arrow_downward_rounded,
+                              color: AppTheme.successColor,
+                            ),
+                          ),
+                          title: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '${tx.monthKey} • +${AppFormatters.formatMoney(tx.amount)} ${l10n.tr('currency')}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              if (tx.isEdited)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.warningColor
+                                        .withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    l10n.tr('edited_label'),
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppTheme.warningColor,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          subtitle: Text(
+                            '${tx.performedByName}${tx.notes != null && tx.notes!.isNotEmpty ? " • ${tx.notes}" : ""}\n${tx.createdAt != null ? AppFormatters.formatDate(tx.createdAt!, includeTime: true) : ""}',
+                          ),
+                          isThreeLine: true,
+                          trailing: IconButton(
+                            tooltip: l10n.tr('edit_company_topup'),
+                            icon: const Icon(Icons.edit_outlined),
+                            onPressed: () => openCompanyTopUpDialog(
+                              context: context,
+                              ref: ref,
+                              existingTransaction: tx,
+                            ),
+                          ),
+                          onTap: () => openCompanyTopUpDialog(
+                            context: context,
+                            ref: ref,
+                            existingTransaction: tx,
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
               ] else ...[
                 if (governorates.isEmpty)
                   EmptyStateWidget(
@@ -239,20 +330,29 @@ class _ManagerBoxesScreenState extends ConsumerState<ManagerBoxesScreen> {
   }
 }
 
-/// نافذة تعبئة صندوق شهري عام (يدعم اختيار الشهر الحالي أو أي شهر سابق)
+/// نافذة تعبئة أو تعديل تعبئة صندوق شهري عام (يدعم اختيار الشهر الحالي أو أي شهر سابق)
 void openCompanyTopUpDialog({
   required BuildContext context,
   required WidgetRef ref,
   String? currentMonthKey,
   String? initialMonthKey,
+  BoxTransaction? existingTransaction,
 }) {
   final l10n = AppLocalizations.of(context);
-  final amountCtrl = TextEditingController();
-  final notesCtrl = TextEditingController();
+  final isEditing = existingTransaction != null;
+  final amountText = existingTransaction != null
+      ? (existingTransaction.amount == existingTransaction.amount.roundToDouble()
+          ? existingTransaction.amount.toStringAsFixed(0)
+          : existingTransaction.amount.toString())
+      : '';
+  final amountCtrl = TextEditingController(text: amountText);
+  final notesCtrl =
+      TextEditingController(text: existingTransaction?.notes ?? '');
   final formKey = GlobalKey<FormState>();
 
   final nowDate = DateTime.now();
   final seedKey =
+      existingTransaction?.monthKey ??
       initialMonthKey ??
       currentMonthKey ??
       ServerTimeService.toMonthKey(nowDate);
@@ -266,7 +366,9 @@ void openCompanyTopUpDialog({
     context: context,
     builder: (ctx) => StatefulBuilder(
       builder: (ctx, setState) => AlertDialog(
-        title: Text(l10n.tr('company_topup')),
+        title: Text(
+          l10n.tr(isEditing ? 'edit_company_topup' : 'company_topup'),
+        ),
         content: Form(
           key: formKey,
           child: SingleChildScrollView(
@@ -325,14 +427,25 @@ void openCompanyTopUpDialog({
                         selectedYear,
                         selectedMonth,
                       );
-                      await ref
-                          .read(boxesRepositoryProvider)
-                          .topUpMonthlyBoxFromCompany(
-                            manager: manager,
-                            monthKey: mKey,
-                            amount: double.parse(amountCtrl.text.trim()),
-                            notes: notesCtrl.text.trim(),
-                          );
+                      final amount = double.parse(amountCtrl.text.trim());
+                      final notes = notesCtrl.text.trim();
+                      final repo = ref.read(boxesRepositoryProvider);
+                      if (isEditing) {
+                        await repo.editCompanyTopUp(
+                          manager: manager,
+                          oldTx: existingTransaction,
+                          newMonthKey: mKey,
+                          newAmount: amount,
+                          notes: notes,
+                        );
+                      } else {
+                        await repo.topUpMonthlyBoxFromCompany(
+                          manager: manager,
+                          monthKey: mKey,
+                          amount: amount,
+                          notes: notes,
+                        );
+                      }
                       if (ctx.mounted) Navigator.pop(ctx);
                     } catch (e) {
                       if (ctx.mounted) {

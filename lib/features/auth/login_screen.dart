@@ -363,7 +363,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     TextButton.icon(
                       onPressed: _openInitialManagerSetupDialog,
                       icon: const Icon(Icons.admin_panel_settings_outlined),
-                      label: Text(l10n.tr('first_time_manager_setup')),
+                      label: Text(l10n.tr('setup_new_manager')),
                     ),
                   ],
                 ),
@@ -416,7 +416,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 icon: const Icon(
                                   Icons.admin_panel_settings_outlined,
                                 ),
-                                label: Text(l10n.tr('first_time_manager_setup')),
+                                label: Text(l10n.tr('setup_new_manager')),
                               ),
                             ],
                           ),

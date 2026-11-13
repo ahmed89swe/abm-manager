@@ -14,8 +14,11 @@ class ExpensesRepository {
   final FirebaseFirestore _firestore;
 
   Stream<List<PersonalExpenseModel>> watchExpensesForUser(AppUser user) {
-    Query<Map<String, dynamic>> query =
-        _firestore.collection('personal_expenses');
+    final managerId = user.effectiveManagerId;
+    if (managerId.isEmpty) return Stream.value(const []);
+    Query<Map<String, dynamic>> query = _firestore
+        .collection('personal_expenses')
+        .where('managerId', isEqualTo: managerId);
     if (user.isDelegate) {
       query = query.where('userId', isEqualTo: user.uid);
     }
@@ -62,13 +65,19 @@ class ExpensesRepository {
       } catch (_) {}
     }
 
-    final monthBoxRef =
-        _firestore.collection('manager_monthly_boxes').doc(deductMonthKey);
+    final managerId = actor.effectiveManagerId;
+    final monthBoxRef = _firestore
+        .collection('manager_monthly_boxes')
+        .doc(MonthlyBox.docId(managerId, deductMonthKey));
     final hasGov =
         actor.governorateId != null && actor.governorateId!.isNotEmpty;
     final govBoxRef = hasGov
         ? _firestore.collection('governorate_monthly_boxes').doc(
-              GovernorateMonthlyBox.docId(actor.governorateId!, deductMonthKey),
+              GovernorateMonthlyBox.docId(
+                managerId,
+                actor.governorateId!,
+                deductMonthKey,
+              ),
             )
         : null;
     final txRef = _firestore.collection('box_transactions').doc();
@@ -91,6 +100,7 @@ class ExpensesRepository {
       if (actor.isManager) {
         if (monthBoxSnap == null || !monthBoxSnap.exists) {
           tx.set(monthBoxRef, {
+            'managerId': managerId,
             'monthKey': deductMonthKey,
             'year': parsed.year,
             'month': parsed.month,
@@ -115,6 +125,7 @@ class ExpensesRepository {
         if (govBoxRef != null && hasGov) {
           if (govBoxSnap == null || !govBoxSnap.exists) {
             tx.set(govBoxRef, {
+              'managerId': managerId,
               'governorateId': actor.governorateId,
               'governorateName': actor.governorateName ?? '',
               'monthKey': deductMonthKey,
@@ -144,6 +155,7 @@ class ExpensesRepository {
         tx.set(
           monthBoxRef,
           {
+            'managerId': managerId,
             'monthKey': deductMonthKey,
             'year': parsed.year,
             'month': parsed.month,
@@ -160,6 +172,7 @@ class ExpensesRepository {
           tx.set(
             govBoxRef,
             {
+              'managerId': managerId,
               'governorateId': actor.governorateId,
               'governorateName': actor.governorateName ?? '',
               'monthKey': deductMonthKey,
@@ -187,6 +200,7 @@ class ExpensesRepository {
 
       final expense = PersonalExpenseModel(
         id: expenseRef.id,
+        managerId: managerId,
         userId: actor.uid,
         userName: actor.name,
         userRole: actor.role.value,
@@ -202,6 +216,7 @@ class ExpensesRepository {
 
       tx.set(expenseRef, expense.toMap());
       tx.set(txRef, {
+        'managerId': managerId,
         'type': BoxTransactionType.personalExpense.firestoreValue,
         'monthKey': deductMonthKey,
         'amount': amount,
@@ -234,6 +249,7 @@ class ExpensesRepository {
     );
 
     await NotificationService.instance.sendCloudNotification(
+      managerId: managerId,
       titleAr: 'مصروف شخصي جديد',
       titleEn: 'New Personal Expense',
       bodyAr: 'سجل ${actor.name} مصروفاً ($title) بمبلغ $amount',
@@ -241,8 +257,8 @@ class ExpensesRepository {
       type: 'personal_expense',
       targetRole: 'manager',
       audienceTags: actor.isDelegate
-          ? ['MANAGERS', 'USER_${actor.uid}']
-          : const ['MANAGERS'],
+          ? ['MANAGER_$managerId', 'USER_${actor.uid}']
+          : ['MANAGER_$managerId'],
       targetUserIds: actor.isDelegate ? [actor.uid] : const [],
       referenceId: expenseRef.id,
       createdByUid: actor.uid,

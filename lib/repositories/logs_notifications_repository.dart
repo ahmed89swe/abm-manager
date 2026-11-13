@@ -9,7 +9,11 @@ class LogsNotificationsRepository {
   final FirebaseFirestore _firestore;
 
   Stream<List<AuditLogModel>> watchAuditLogs(AppUser user) {
-    Query<Map<String, dynamic>> query = _firestore.collection('audit_logs');
+    final managerId = user.effectiveManagerId;
+    if (managerId.isEmpty) return Stream.value(const []);
+    Query<Map<String, dynamic>> query = _firestore
+        .collection('audit_logs')
+        .where('managerId', isEqualTo: managerId);
     if (user.isDelegate) {
       query = query.where('actorUid', isEqualTo: user.uid);
     }
@@ -27,9 +31,12 @@ class LogsNotificationsRepository {
   }
 
   Stream<List<AppNotificationModel>> watchNotifications(AppUser user) {
+    final managerId = user.effectiveManagerId;
+    if (managerId.isEmpty) return Stream.value(const []);
     if (user.isManager) {
       return _firestore
           .collection('notifications')
+          .where('managerId', isEqualTo: managerId)
           .orderBy('createdAt', descending: true)
           .limit(100)
           .snapshots()
@@ -42,12 +49,13 @@ class LogsNotificationsRepository {
       'USER_${user.uid}',
       if (user.governorateId != null && user.governorateId!.isNotEmpty)
         'GOV_${user.governorateId}',
-      'DELEGATES',
-      'ALL',
+      'DELEGATES_$managerId',
+      'ALL_$managerId',
     ];
 
     return _firestore
         .collection('notifications')
+        .where('managerId', isEqualTo: managerId)
         .where('audienceTags', arrayContainsAny: tags)
         .snapshots()
         .map((snap) {

@@ -59,11 +59,19 @@ class MonthlyBoxDetailScreen extends ConsumerWidget {
       title = box.label(l10n.isAr);
     }
 
+    final user = ref.watch(currentUserProfileProvider).value;
+    final managerId = user?.effectiveManagerId ?? '';
     final txStream = isGovMode
         ? ref
             .watch(boxesRepositoryProvider)
-            .watchTransactionsForGovernorateMonth(governorate!.id, monthKey)
-        : ref.watch(boxesRepositoryProvider).watchTransactionsForMonth(monthKey);
+            .watchTransactionsForGovernorateMonth(
+              managerId,
+              governorate!.id,
+              monthKey,
+            )
+        : ref
+            .watch(boxesRepositoryProvider)
+            .watchTransactionsForMonth(managerId, monthKey);
 
     return Scaffold(
       appBar: AppBar(
@@ -158,6 +166,11 @@ class MonthlyBoxDetailScreen extends ConsumerWidget {
                           isTopUp ? AppTheme.successColor : AppTheme.dangerColor;
                       final sign = isTopUp ? '+' : '-';
 
+                      final isCompanyTopUp =
+                          tx.type == BoxTransactionType.companyTopUp;
+                      final isEditableCompanyTopUp =
+                          isCompanyTopUp && (user?.isManager ?? false);
+
                       return Card(
                         margin: EdgeInsets.zero,
                         child: ListTile(
@@ -170,22 +183,74 @@ class MonthlyBoxDetailScreen extends ConsumerWidget {
                               color: color,
                             ),
                           ),
-                          title: Text(
-                            _txTitle(tx, l10n.isAr),
-                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          title: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _txTitle(tx, l10n.isAr),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              if (tx.isEdited)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.warningColor
+                                        .withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    l10n.tr('edited_label'),
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppTheme.warningColor,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                           subtitle: Text(
                             '${tx.performedByName}${tx.governorateName != null && tx.governorateName!.isNotEmpty ? " • ${tx.governorateName}" : ""}${tx.notes != null && tx.notes!.isNotEmpty ? " • ${tx.notes}" : ""}\n${tx.createdAt != null ? AppFormatters.formatDate(tx.createdAt!, includeTime: true) : ""}',
                           ),
                           isThreeLine: true,
-                          trailing: Text(
-                            '$sign${AppFormatters.formatMoney(tx.amount)}',
-                            style: TextStyle(
-                              color: color,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
-                            ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '$sign${AppFormatters.formatMoney(tx.amount)}',
+                                style: TextStyle(
+                                  color: color,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 15,
+                                ),
+                              ),
+                              if (isEditableCompanyTopUp) ...[
+                                const SizedBox(width: 4),
+                                IconButton(
+                                  tooltip: l10n.tr('edit_company_topup'),
+                                  icon: const Icon(Icons.edit_outlined, size: 20),
+                                  onPressed: () => openCompanyTopUpDialog(
+                                    context: context,
+                                    ref: ref,
+                                    existingTransaction: tx,
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
+                          onTap: isEditableCompanyTopUp
+                              ? () => openCompanyTopUpDialog(
+                                    context: context,
+                                    ref: ref,
+                                    existingTransaction: tx,
+                                  )
+                              : null,
                         ),
                       );
                     }).toList(),

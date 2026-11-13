@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class MonthlyBox {
   const MonthlyBox({
+    this.id = '',
+    this.managerId = '',
     required this.monthKey,
     required this.year,
     required this.month,
@@ -12,6 +14,8 @@ class MonthlyBox {
     this.updatedAt,
   });
 
+  final String id; // {managerId}_{YYYY-MM}
+  final String managerId;
   final String monthKey; // YYYY-MM
   final int year;
   final int month;
@@ -21,6 +25,9 @@ class MonthlyBox {
   final double currentBalance; // يقبل القيم السالبة عند تأخر تعبئة الشركة
   final DateTime? updatedAt;
 
+  static String docId(String managerId, String monthKey) =>
+      managerId.isNotEmpty ? '${managerId}_$monthKey' : monthKey;
+
   double get totalDeductions =>
       totalInvoiceDeductions + totalExpenseDeductions;
 
@@ -29,12 +36,14 @@ class MonthlyBox {
 
   String shortLabel(bool isAr) => isAr ? 'شهر $month' : 'Month $month';
 
-  factory MonthlyBox.empty(String monthKey) {
+  factory MonthlyBox.empty(String monthKey, {String managerId = ''}) {
     final parts = monthKey.split('-');
     final year = int.tryParse(parts.first) ?? DateTime.now().year;
     final month =
         parts.length > 1 ? (int.tryParse(parts[1]) ?? 1) : DateTime.now().month;
     return MonthlyBox(
+      id: docId(managerId, monthKey),
+      managerId: managerId,
       monthKey: monthKey,
       year: year,
       month: month,
@@ -46,8 +55,13 @@ class MonthlyBox {
   }
 
   factory MonthlyBox.fromMap(Map<String, dynamic> map, String id) {
+    final rawKey = (map['monthKey'] as String?) ?? '';
+    final resolvedMonthKey =
+        rawKey.isNotEmpty ? rawKey : (id.contains('_') ? id.split('_').last : id);
     return MonthlyBox(
-      monthKey: id,
+      id: id,
+      managerId: (map['managerId'] ?? '') as String,
+      monthKey: resolvedMonthKey,
       year: (map['year'] ?? 2026) as int,
       month: (map['month'] ?? 1) as int,
       totalCompanyTopUps: ((map['totalCompanyTopUps'] ?? 0) as num).toDouble(),
@@ -62,6 +76,7 @@ class MonthlyBox {
 
   Map<String, dynamic> toMap() {
     return {
+      if (managerId.isNotEmpty) 'managerId': managerId,
       'monthKey': monthKey,
       'year': year,
       'month': month,
@@ -78,6 +93,7 @@ class MonthlyBox {
 class GovernorateMonthlyBox {
   const GovernorateMonthlyBox({
     required this.id,
+    this.managerId = '',
     required this.governorateId,
     required this.governorateName,
     required this.monthKey,
@@ -90,7 +106,8 @@ class GovernorateMonthlyBox {
     this.updatedAt,
   });
 
-  final String id; // {governorateId}_{YYYY-MM}
+  final String id; // {managerId}_{governorateId}_{YYYY-MM}
+  final String managerId;
   final String governorateId;
   final String governorateName;
   final String monthKey;
@@ -108,10 +125,20 @@ class GovernorateMonthlyBox {
   String label(bool isAr) =>
       isAr ? 'صندوق شهر $month ($year)' : 'Month $month Box ($year)';
 
-  static String docId(String governorateId, String monthKey) =>
+  static String legacyDocId(String governorateId, String monthKey) =>
       '${governorateId}_$monthKey';
 
+  static String docId(
+    String managerId,
+    String governorateId,
+    String monthKey,
+  ) =>
+      managerId.isNotEmpty
+          ? '${managerId}_${governorateId}_$monthKey'
+          : '${governorateId}_$monthKey';
+
   factory GovernorateMonthlyBox.empty({
+    String managerId = '',
     required String governorateId,
     required String governorateName,
     required String monthKey,
@@ -121,7 +148,8 @@ class GovernorateMonthlyBox {
     final month =
         parts.length > 1 ? (int.tryParse(parts[1]) ?? 1) : DateTime.now().month;
     return GovernorateMonthlyBox(
-      id: docId(governorateId, monthKey),
+      id: docId(managerId, governorateId, monthKey),
+      managerId: managerId,
       governorateId: governorateId,
       governorateName: governorateName,
       monthKey: monthKey,
@@ -137,6 +165,7 @@ class GovernorateMonthlyBox {
   factory GovernorateMonthlyBox.fromMap(Map<String, dynamic> map, String id) {
     return GovernorateMonthlyBox(
       id: id,
+      managerId: (map['managerId'] ?? '') as String,
       governorateId: (map['governorateId'] ?? '') as String,
       governorateName: (map['governorateName'] ?? '') as String,
       monthKey: (map['monthKey'] ?? '') as String,
@@ -201,6 +230,7 @@ enum BoxTransactionType {
 class BoxTransaction {
   const BoxTransaction({
     required this.id,
+    this.managerId = '',
     required this.type,
     required this.monthKey,
     required this.amount,
@@ -214,9 +244,13 @@ class BoxTransaction {
     this.referenceId,
     this.notes,
     this.createdAt,
+    this.editedByUid,
+    this.editedByName,
+    this.updatedAt,
   });
 
   final String id;
+  final String managerId;
   final BoxTransactionType type;
   final String monthKey;
   final double amount;
@@ -230,10 +264,16 @@ class BoxTransaction {
   final String? referenceId;
   final String? notes;
   final DateTime? createdAt;
+  final String? editedByUid;
+  final String? editedByName;
+  final DateTime? updatedAt;
+
+  bool get isEdited => updatedAt != null;
 
   factory BoxTransaction.fromMap(Map<String, dynamic> map, String id) {
     return BoxTransaction(
       id: id,
+      managerId: (map['managerId'] ?? '') as String,
       type: BoxTransactionType.fromString(map['type'] as String?),
       monthKey: (map['monthKey'] ?? '') as String,
       amount: ((map['amount'] ?? 0) as num).toDouble(),
@@ -247,11 +287,15 @@ class BoxTransaction {
       referenceId: map['referenceId'] as String?,
       notes: map['notes'] as String?,
       createdAt: (map['createdAt'] as Timestamp?)?.toDate(),
+      editedByUid: map['editedByUid'] as String?,
+      editedByName: map['editedByName'] as String?,
+      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate(),
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
+      if (managerId.isNotEmpty) 'managerId': managerId,
       'type': type.firestoreValue,
       'monthKey': monthKey,
       'amount': amount,
@@ -264,6 +308,9 @@ class BoxTransaction {
       'governorateName': governorateName,
       'referenceId': referenceId,
       'notes': notes,
+      if (editedByUid != null) 'editedByUid': editedByUid,
+      if (editedByName != null) 'editedByName': editedByName,
+      if (updatedAt != null) 'updatedAt': Timestamp.fromDate(updatedAt!),
       'createdAt': createdAt != null
           ? Timestamp.fromDate(createdAt!)
           : FieldValue.serverTimestamp(),

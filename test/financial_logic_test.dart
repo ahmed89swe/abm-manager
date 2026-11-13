@@ -35,9 +35,41 @@ void main() {
 
     test('GovernorateMonthlyBox docId and balances calculate properly', () {
       expect(
-        GovernorateMonthlyBox.docId('baghdad', '2026-05'),
+        GovernorateMonthlyBox.docId('mgr_1', 'baghdad', '2026-05'),
+        'mgr_1_baghdad_2026-05',
+      );
+      expect(
+        GovernorateMonthlyBox.legacyDocId('baghdad', '2026-05'),
         'baghdad_2026-05',
       );
+      expect(
+        MonthlyBox.docId('mgr_1', '2026-05'),
+        'mgr_1_2026-05',
+      );
+      final parsedBox = MonthlyBox.fromMap(
+        {'year': 2026, 'month': 5, 'currentBalance': 500},
+        'mgr_1_2026-05',
+      );
+      expect(parsedBox.monthKey, '2026-05');
+      expect(parsedBox.currentBalance, 500);
+
+      final m1 = AppUser(
+        uid: 'm1',
+        name: 'Manager 1',
+        email: 'm1@example.com',
+        phone: '',
+        role: UserRole.manager,
+      );
+      final d1 = AppUser(
+        uid: 'd1',
+        managerId: 'm1',
+        name: 'Delegate 1',
+        email: 'd1@example.com',
+        phone: '',
+        role: UserRole.delegate,
+      );
+      expect(m1.effectiveManagerId, 'm1');
+      expect(d1.effectiveManagerId, 'm1');
       const govBox = GovernorateMonthlyBox(
         id: 'baghdad_2026-05',
         governorateId: 'baghdad',

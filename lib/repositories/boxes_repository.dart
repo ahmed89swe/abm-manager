@@ -12,19 +12,29 @@ class BoxesRepository {
   final FirebaseFirestore _firestore;
 
   /// ضمان إنشاء صندوق الشهر الحالي تلقائياً عند بدء كل شهر اعتماداً على توقيت السيرفر
-  Future<String> ensureCurrentMonthBoxExists() async {
+  Future<String> ensureCurrentMonthBoxExists(AppUser user) async {
     final now = await ServerTimeService.instance.getTrustedNow();
     final monthKey = ServerTimeService.toMonthKey(now);
-    await ensureMonthBoxExists(monthKey);
+    await ensureMonthBoxExists(
+      managerId: user.effectiveManagerId,
+      monthKey: monthKey,
+    );
     return monthKey;
   }
 
-  Future<void> ensureMonthBoxExists(String monthKey) async {
-    final ref = _firestore.collection('manager_monthly_boxes').doc(monthKey);
+  Future<void> ensureMonthBoxExists({
+    required String managerId,
+    required String monthKey,
+  }) async {
+    if (managerId.isEmpty) return;
+    final ref = _firestore
+        .collection('manager_monthly_boxes')
+        .doc(MonthlyBox.docId(managerId, monthKey));
     final doc = await ref.get();
     if (!doc.exists) {
       final parsed = ServerTimeService.parseMonthKey(monthKey);
       await ref.set({
+        'managerId': managerId,
         'monthKey': monthKey,
         'year': parsed.year,
         'month': parsed.month,
@@ -37,9 +47,11 @@ class BoxesRepository {
     }
   }
 
-  Stream<List<MonthlyBox>> watchMonthlyBoxes() {
+  Stream<List<MonthlyBox>> watchMonthlyBoxes(String managerId) {
+    if (managerId.isEmpty) return Stream.value(const []);
     return _firestore
         .collection('manager_monthly_boxes')
+        .where('managerId', isEqualTo: managerId)
         .snapshots()
         .map((snap) {
       final list = snap.docs
@@ -51,9 +63,13 @@ class BoxesRepository {
   }
 
   /// متابعة الصناديق الشهرية الفرعية لكل محافظة (للمدير فقط)
-  Stream<List<GovernorateMonthlyBox>> watchGovernorateMonthlyBoxes() {
+  Stream<List<GovernorateMonthlyBox>> watchGovernorateMonthlyBoxes(
+    String managerId,
+  ) {
+    if (managerId.isEmpty) return Stream.value(const []);
     return _firestore
         .collection('governorate_monthly_boxes')
+        .where('managerId', isEqualTo: managerId)
         .snapshots()
         .map((snap) {
       final list = snap.docs
@@ -64,9 +80,14 @@ class BoxesRepository {
     });
   }
 
-  Stream<List<BoxTransaction>> watchTransactionsForMonth(String monthKey) {
+  Stream<List<BoxTransaction>> watchTransactionsForMonth(
+    String managerId,
+    String monthKey,
+  ) {
+    if (managerId.isEmpty) return Stream.value(const []);
     return _firestore
         .collection('box_transactions')
+        .where('managerId', isEqualTo: managerId)
         .where('monthKey', isEqualTo: monthKey)
         .snapshots()
         .map((snap) {
@@ -83,11 +104,14 @@ class BoxesRepository {
   }
 
   Stream<List<BoxTransaction>> watchTransactionsForGovernorateMonth(
+    String managerId,
     String governorateId,
     String monthKey,
   ) {
+    if (managerId.isEmpty) return Stream.value(const []);
     return _firestore
         .collection('box_transactions')
+        .where('managerId', isEqualTo: managerId)
         .where('governorateId', isEqualTo: governorateId)
         .snapshots()
         .map((snap) {
@@ -104,9 +128,11 @@ class BoxesRepository {
     });
   }
 
-  Stream<List<BoxTransaction>> watchAllBoxTransactions() {
+  Stream<List<BoxTransaction>> watchAllBoxTransactions(String managerId) {
+    if (managerId.isEmpty) return Stream.value(const []);
     return _firestore
         .collection('box_transactions')
+        .where('managerId', isEqualTo: managerId)
         .orderBy('createdAt', descending: true)
         .limit(300)
         .snapshots()
@@ -125,14 +151,18 @@ class BoxesRepository {
     if (amount <= 0) {
       throw ArgumentError('يجب أن يكون مبلغ التعبئة أكبر من صفر');
     }
+    final managerId = manager.effectiveManagerId;
     final parsed = ServerTimeService.parseMonthKey(monthKey);
-    final boxRef = _firestore.collection('manager_monthly_boxes').doc(monthKey);
+    final boxRef = _firestore
+        .collection('manager_monthly_boxes')
+        .doc(MonthlyBox.docId(managerId, monthKey));
     final txRef = _firestore.collection('box_transactions').doc();
 
     await _firestore.runTransaction((tx) async {
       final boxSnap = await tx.get(boxRef);
       if (!boxSnap.exists) {
         tx.set(boxRef, {
+          'managerId': managerId,
           'monthKey': monthKey,
           'year': parsed.year,
           'month': parsed.month,
@@ -154,6 +184,7 @@ class BoxesRepository {
       }
 
       tx.set(txRef, {
+        'managerId': managerId,
         'type': BoxTransactionType.companyTopUp.firestoreValue,
         'monthKey': monthKey,
         'amount': amount,
@@ -175,14 +206,171 @@ class BoxesRepository {
     );
 
     await NotificationService.instance.sendCloudNotification(
+      managerId: managerId,
       titleAr: 'تعبئة صندوق شهري',
       titleEn: 'Monthly Box Topped Up',
       bodyAr: 'تمت تعبئة صندوق شهر $monthKey بمبلغ $amount',
       bodyEn: 'Month $monthKey box topped up with $amount',
       type: 'company_topup',
       targetRole: 'manager',
-      audienceTags: const ['MANAGERS'],
+      audienceTags: ['MANAGER_$managerId'],
       referenceId: monthKey,
+      createdByUid: manager.uid,
+    );
+  }
+
+  /// تعديل عملية تعبئة من الشركة (تعديل المبلغ و/أو الشهر و/أو الملاحظات)
+  Future<void> editCompanyTopUp({
+    required AppUser manager,
+    required BoxTransaction oldTx,
+    required String newMonthKey,
+    required double newAmount,
+    String? notes,
+  }) async {
+    if (!manager.isManager) {
+      throw StateError('تعديل عمليات التعبئة متاح للمدير فقط');
+    }
+    if (oldTx.type != BoxTransactionType.companyTopUp) {
+      throw ArgumentError('يمكن تعديل عمليات التعبئة من الشركة فقط');
+    }
+    if (newAmount <= 0) {
+      throw ArgumentError('يجب أن يكون مبلغ التعبئة أكبر من صفر');
+    }
+
+    final managerId = manager.effectiveManagerId;
+    final txRef = _firestore.collection('box_transactions').doc(oldTx.id);
+    String actualOldMonthKey = oldTx.monthKey;
+    double actualOldAmount = oldTx.amount;
+
+    await _firestore.runTransaction((tx) async {
+      final txSnap = await tx.get(txRef);
+      if (!txSnap.exists || txSnap.data() == null) {
+        throw StateError('عملية التعبئة غير موجودة');
+      }
+      final txData = txSnap.data()!;
+      if (txData['type'] != BoxTransactionType.companyTopUp.firestoreValue) {
+        throw StateError('نوع العملية غير صالح للتعديل');
+      }
+      actualOldMonthKey = (txData['monthKey'] as String?) ?? oldTx.monthKey;
+      actualOldAmount =
+          ((txData['amount'] ?? oldTx.amount) as num).toDouble();
+
+      final newParsed = ServerTimeService.parseMonthKey(newMonthKey);
+      final newBoxRef = _firestore
+          .collection('manager_monthly_boxes')
+          .doc(MonthlyBox.docId(managerId, newMonthKey));
+
+      if (actualOldMonthKey == newMonthKey) {
+        final delta = newAmount - actualOldAmount;
+        final newBoxSnap = await tx.get(newBoxRef);
+        if (!newBoxSnap.exists) {
+          tx.set(newBoxRef, {
+            'managerId': managerId,
+            'monthKey': newMonthKey,
+            'year': newParsed.year,
+            'month': newParsed.month,
+            'totalCompanyTopUps': newAmount,
+            'totalInvoiceDeductions': 0.0,
+            'totalExpenseDeductions': 0.0,
+            'currentBalance': newAmount,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        } else {
+          final bData = newBoxSnap.data()!;
+          final prevTopUp =
+              ((bData['totalCompanyTopUps'] ?? 0) as num).toDouble();
+          final prevBalance =
+              ((bData['currentBalance'] ?? 0) as num).toDouble();
+          tx.update(newBoxRef, {
+            'totalCompanyTopUps': prevTopUp + delta,
+            'currentBalance': prevBalance + delta,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+      } else {
+        final oldBoxRef = _firestore
+            .collection('manager_monthly_boxes')
+            .doc(MonthlyBox.docId(managerId, actualOldMonthKey));
+        final oldBoxSnap = await tx.get(oldBoxRef);
+        final newBoxSnap = await tx.get(newBoxRef);
+
+        if (oldBoxSnap.exists) {
+          final oldData = oldBoxSnap.data()!;
+          final prevOldTopUp =
+              ((oldData['totalCompanyTopUps'] ?? 0) as num).toDouble();
+          final prevOldBal =
+              ((oldData['currentBalance'] ?? 0) as num).toDouble();
+          tx.update(oldBoxRef, {
+            'totalCompanyTopUps': prevOldTopUp - actualOldAmount,
+            'currentBalance': prevOldBal - actualOldAmount,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        if (!newBoxSnap.exists) {
+          tx.set(newBoxRef, {
+            'managerId': managerId,
+            'monthKey': newMonthKey,
+            'year': newParsed.year,
+            'month': newParsed.month,
+            'totalCompanyTopUps': newAmount,
+            'totalInvoiceDeductions': 0.0,
+            'totalExpenseDeductions': 0.0,
+            'currentBalance': newAmount,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        } else {
+          final newData = newBoxSnap.data()!;
+          final prevNewTopUp =
+              ((newData['totalCompanyTopUps'] ?? 0) as num).toDouble();
+          final prevNewBal =
+              ((newData['currentBalance'] ?? 0) as num).toDouble();
+          tx.update(newBoxRef, {
+            'totalCompanyTopUps': prevNewTopUp + newAmount,
+            'currentBalance': prevNewBal + newAmount,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+      }
+
+      tx.update(txRef, {
+        'monthKey': newMonthKey,
+        'amount': newAmount,
+        'notes': (notes != null && notes.trim().isNotEmpty) ? notes.trim() : null,
+        'editedByUid': manager.uid,
+        'editedByName': manager.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+
+    await AuditHelper.recordLog(
+      firestore: _firestore,
+      actor: manager,
+      actionType: 'edit_company_topup',
+      descriptionAr:
+          'عدّل المدير عملية التعبئة من الشركة ($actualOldMonthKey: $actualOldAmount -> $newMonthKey: $newAmount)',
+      descriptionEn:
+          'Manager edited company top-up ($actualOldMonthKey: $actualOldAmount -> $newMonthKey: $newAmount)',
+      metadata: {
+        'transactionId': oldTx.id,
+        'oldMonthKey': actualOldMonthKey,
+        'newMonthKey': newMonthKey,
+        'oldAmount': actualOldAmount,
+        'newAmount': newAmount,
+      },
+    );
+
+    await NotificationService.instance.sendCloudNotification(
+      managerId: managerId,
+      titleAr: 'تعديل تعبئة من الشركة',
+      titleEn: 'Company Top-Up Edited',
+      bodyAr:
+          'تم تعديل عملية التعبئة لشهر $newMonthKey إلى مبلغ $newAmount',
+      bodyEn: 'Company top-up for $newMonthKey updated to $newAmount',
+      type: 'edit_company_topup',
+      targetRole: 'manager',
+      audienceTags: ['MANAGER_$managerId'],
+      referenceId: oldTx.id,
       createdByUid: manager.uid,
     );
   }
@@ -199,8 +387,10 @@ class BoxesRepository {
     if (amount <= 0) {
       throw ArgumentError('يجب أن يكون مبلغ التعبئة أكبر من صفر');
     }
+    final managerId = manager.effectiveManagerId;
     final parsed = ServerTimeService.parseMonthKey(monthKey);
-    final docId = GovernorateMonthlyBox.docId(governorateId, monthKey);
+    final docId =
+        GovernorateMonthlyBox.docId(managerId, governorateId, monthKey);
     final govBoxRef =
         _firestore.collection('governorate_monthly_boxes').doc(docId);
     final txRef = _firestore.collection('box_transactions').doc();
@@ -209,6 +399,7 @@ class BoxesRepository {
       final boxSnap = await tx.get(govBoxRef);
       if (!boxSnap.exists) {
         tx.set(govBoxRef, {
+          'managerId': managerId,
           'governorateId': governorateId,
           'governorateName': governorateName,
           'monthKey': monthKey,
@@ -233,6 +424,7 @@ class BoxesRepository {
       }
 
       tx.set(txRef, {
+        'managerId': managerId,
         'type': BoxTransactionType.governorateTopUp.firestoreValue,
         'monthKey': monthKey,
         'amount': amount,
@@ -263,6 +455,7 @@ class BoxesRepository {
     );
 
     await NotificationService.instance.sendCloudNotification(
+      managerId: managerId,
       titleAr: 'تعبئة صندوق محافظة',
       titleEn: 'Governorate Box Topped Up',
       bodyAr:
@@ -271,7 +464,7 @@ class BoxesRepository {
           '$governorateName sub-box for $monthKey topped up with $amount',
       type: 'governorate_topup',
       targetRole: 'manager',
-      audienceTags: const ['MANAGERS'],
+      audienceTags: ['MANAGER_$managerId'],
       referenceId: docId,
       createdByUid: manager.uid,
     );
@@ -288,6 +481,7 @@ class BoxesRepository {
     if (amount <= 0) {
       throw ArgumentError('يجب أن يكون مبلغ التعبئة أكبر من صفر');
     }
+    final managerId = manager.effectiveManagerId;
     final now = await ServerTimeService.instance.getTrustedNow();
     final monthKey = monthKeyOverride ?? ServerTimeService.toMonthKey(now);
     final delegateRef = _firestore.collection('users').doc(delegate.uid);
@@ -305,6 +499,7 @@ class BoxesRepository {
       });
 
       tx.set(txRef, {
+        'managerId': managerId,
         'type': BoxTransactionType.delegateVirtualTopUp.firestoreValue,
         'monthKey': monthKey,
         'amount': amount,
@@ -337,13 +532,14 @@ class BoxesRepository {
     );
 
     await NotificationService.instance.sendCloudNotification(
+      managerId: managerId,
       titleAr: 'تمت تعبئة صندوقك',
       titleEn: 'Your Box Was Topped Up',
       bodyAr: 'أضاف المدير مبلغ $amount إلى رصيد صندوقك الافتراضي ($monthKey)',
       bodyEn: 'Manager added $amount to your virtual box balance ($monthKey)',
       type: 'delegate_topup',
       targetRole: 'delegate',
-      audienceTags: ['MANAGERS', 'USER_${delegate.uid}'],
+      audienceTags: ['MANAGER_$managerId', 'USER_${delegate.uid}'],
       targetUserIds: [delegate.uid],
       referenceId: delegate.uid,
       createdByUid: manager.uid,

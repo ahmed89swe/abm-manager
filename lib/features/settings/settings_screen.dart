@@ -9,6 +9,7 @@ import '../../main.dart';
 import '../../models/app_user.dart';
 import '../../providers/app_providers.dart';
 import '../../services/receipt_storage_service.dart';
+import '../../widgets/browser_notification_widgets.dart';
 import '../../widgets/common_widgets.dart';
 import '../../widgets/user_avatar_widget.dart';
 
@@ -411,6 +412,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
         ),
         const SizedBox(height: 16),
+        if (kIsWeb) ...[
+          const BrowserNotificationsCard(),
+          const SizedBox(height: 16),
+        ],
         OutlinedButton.icon(
           style: OutlinedButton.styleFrom(
             foregroundColor: Theme.of(context).colorScheme.error,

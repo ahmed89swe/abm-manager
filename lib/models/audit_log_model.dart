@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class AuditLogModel {
   const AuditLogModel({
     required this.id,
+    this.managerId = '',
     required this.actorUid,
     required this.actorName,
     required this.actorRole,
@@ -14,6 +15,7 @@ class AuditLogModel {
   });
 
   final String id;
+  final String managerId;
   final String actorUid;
   final String actorName;
   final String actorRole;
@@ -26,6 +28,7 @@ class AuditLogModel {
   factory AuditLogModel.fromMap(Map<String, dynamic> map, String id) {
     return AuditLogModel(
       id: id,
+      managerId: (map['managerId'] ?? '') as String,
       actorUid: (map['actorUid'] ?? '') as String,
       actorName: (map['actorName'] ?? '') as String,
       actorRole: (map['actorRole'] ?? '') as String,
@@ -39,6 +42,7 @@ class AuditLogModel {
 
   Map<String, dynamic> toMap() {
     return {
+      if (managerId.isNotEmpty) 'managerId': managerId,
       'actorUid': actorUid,
       'actorName': actorName,
       'actorRole': actorRole,
@@ -54,6 +58,7 @@ class AuditLogModel {
 class AppNotificationModel {
   const AppNotificationModel({
     required this.id,
+    this.managerId = '',
     required this.titleAr,
     required this.titleEn,
     required this.bodyAr,
@@ -69,6 +74,7 @@ class AppNotificationModel {
   });
 
   final String id;
+  final String managerId;
   final String titleAr;
   final String titleEn;
   final String bodyAr;
@@ -76,7 +82,7 @@ class AppNotificationModel {
   final String type;
   final String targetRole; // manager | delegate | all
   final List<String> targetUserIds;
-  final List<String> audienceTags; // ['MANAGERS', 'USER_xxx', 'GOV_yyy', 'ALL']
+  final List<String> audienceTags; // ['MANAGER_{mId}', 'USER_xxx', 'GOV_yyy', 'ALL_{mId}']
   final List<String> readByUids;
   final String? referenceId;
   final String? createdByUid;
@@ -87,6 +93,7 @@ class AppNotificationModel {
   factory AppNotificationModel.fromMap(Map<String, dynamic> map, String id) {
     return AppNotificationModel(
       id: id,
+      managerId: (map['managerId'] ?? '') as String,
       titleAr: (map['titleAr'] ?? '') as String,
       titleEn: (map['titleEn'] ?? '') as String,
       bodyAr: (map['bodyAr'] ?? '') as String,
@@ -104,6 +111,7 @@ class AppNotificationModel {
 
   Map<String, dynamic> toMap() {
     return {
+      if (managerId.isNotEmpty) 'managerId': managerId,
       'titleAr': titleAr,
       'titleEn': titleEn,
       'bodyAr': bodyAr,

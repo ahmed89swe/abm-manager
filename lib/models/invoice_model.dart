@@ -93,6 +93,7 @@ class InvoiceItem {
 class InvoiceModel {
   const InvoiceModel({
     required this.id,
+    this.managerId = '',
     required this.invoiceNumber,
     required this.governorateId,
     required this.governorateName,
@@ -127,6 +128,7 @@ class InvoiceModel {
   });
 
   final String id;
+  final String managerId;
   final String invoiceNumber;
   final String governorateId;
   final String governorateName;
@@ -166,6 +168,7 @@ class InvoiceModel {
     final items = rawItems.map(InvoiceItem.fromMap).toList();
     return InvoiceModel(
       id: id,
+      managerId: (map['managerId'] ?? '') as String,
       invoiceNumber: (map['invoiceNumber'] ?? id.substring(0, 6)) as String,
       governorateId: (map['governorateId'] ?? '') as String,
       governorateName: (map['governorateName'] ?? '') as String,
@@ -204,6 +207,7 @@ class InvoiceModel {
 
   Map<String, dynamic> toMap({bool forCreate = false}) {
     return {
+      if (managerId.isNotEmpty) 'managerId': managerId,
       'invoiceNumber': invoiceNumber,
       'governorateId': governorateId,
       'governorateName': governorateName,

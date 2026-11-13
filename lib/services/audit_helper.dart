@@ -13,6 +13,7 @@ class AuditHelper {
     Map<String, dynamic> metadata = const {},
   }) async {
     await firestore.collection('audit_logs').add({
+      'managerId': actor.effectiveManagerId,
       'actorUid': actor.uid,
       'actorName': actor.name,
       'actorRole': actor.role.value,

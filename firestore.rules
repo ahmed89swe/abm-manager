@@ -1,16 +1,28 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
+
     function isSignedIn() {
       return request.auth != null;
     }
 
+    function userDocPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function hasProfile() {
+      return isSignedIn() && exists(userDocPath(request.auth.uid));
+    }
+
     function currentUserDoc() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return get(userDocPath(request.auth.uid));
     }
 
     function isActiveUser() {
-      return isSignedIn() && currentUserDoc().data.isActive == true;
+      return hasProfile() &&
+        (!('isActive' in currentUserDoc().data) ||
+          currentUserDoc().data.isActive == true);
     }
 
     function isManager() {
@@ -21,145 +33,282 @@ service cloud.firestore {
       return isActiveUser() && currentUserDoc().data.role == 'delegate';
     }
 
-    // إعدادات الإصدار والتحديثات ووثيقة التهيئة الأولى
-    match /app_config/{docId} {
+    function currentManagerId() {
+      return isManager()
+        ? (('managerId' in currentUserDoc().data &&
+            currentUserDoc().data.managerId is string &&
+            currentUserDoc().data.managerId != '')
+            ? currentUserDoc().data.managerId
+            : request.auth.uid)
+        : (('managerId' in currentUserDoc().data &&
+            currentUserDoc().data.managerId is string)
+            ? currentUserDoc().data.managerId
+            : '');
+    }
+
+    function legacyPrimaryManagerUid() {
+      return exists(/databases/$(database)/documents/app_config/bootstrap)
+        ? get(/databases/$(database)/documents/app_config/bootstrap).data.managerUid
+        : '';
+    }
+
+    function isLegacyMigrationActive() {
+      return isManager() &&
+        request.auth.uid == legacyPrimaryManagerUid() &&
+        (!('legacyMigrated' in currentUserDoc().data) ||
+          currentUserDoc().data.legacyMigrated != true);
+    }
+
+    function delegateAudienceTags() {
+      return [
+        'USER_' + request.auth.uid,
+        (('governorateId' in currentUserDoc().data &&
+          currentUserDoc().data.governorateId is string)
+            ? ('GOV_' + currentUserDoc().data.governorateId)
+            : 'GOV___NONE__'),
+        'DELEGATES_' + currentManagerId(),
+        'ALL_' + currentManagerId()
+      ];
+    }
+
+    // إعداد التهيئة الأولي وبيانات الإصدارات
+    match /app_config/bootstrap {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+        request.resource.data.managerUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /app_config/version_info {
       allow read: if true;
-      allow create: if isManager() || (
-        isSignedIn() &&
-        docId == 'bootstrap' &&
-        !exists(/databases/$(database)/documents/app_config/bootstrap) &&
-        getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'manager'
-      );
-      allow update, delete: if isManager();
+      allow create, update: if isManager();
+      allow delete: if false;
     }
 
-    // المستخدمون:
-    // - المدير يدير الجميع.
-    // - المندوب يقرأ ملفه، ويحدث الاسم الشخصي والهاتف والصورة الشخصية وتوكن الإشعارات،
-    //   أو يقلل رصيده عند الصرف (دون السماح بزيادة رصيده بنفسه أو تغيير دوره).
+    // المستخدمون (المدراء المستقلون + المندوبون المعزولون لكل مدير)
     match /users/{userId} {
-      allow read: if isManager() || (isSignedIn() && request.auth.uid == userId);
-      allow create: if isManager() || (
-        isSignedIn() &&
-        request.auth.uid == userId &&
-        !exists(/databases/$(database)/documents/users/$(userId)) &&
-        !exists(/databases/$(database)/documents/app_config/bootstrap) &&
-        request.resource.data.role == 'manager'
+      allow get: if isSignedIn() && (
+        request.auth.uid == userId ||
+        isLegacyMigrationActive() ||
+        (isManager() &&
+          (resource == null || resource.data.managerId == currentManagerId()))
       );
-      allow update: if isManager() || (
-        isSignedIn() &&
-        request.auth.uid == userId &&
-        request.resource.data.role == resource.data.role &&
-        request.resource.data.isActive == resource.data.isActive &&
-        request.resource.data.virtualBoxBalance <= resource.data.virtualBoxBalance
-      );
-      allow delete: if isManager();
+
+      allow list: if isLegacyMigrationActive() ||
+        (isManager() && resource.data.managerId == currentManagerId());
+
+      allow create: if
+        (isSignedIn() &&
+          request.auth.uid == userId &&
+          request.resource.data.role == 'manager' &&
+          (!('managerId' in request.resource.data) ||
+            request.resource.data.managerId == request.auth.uid)) ||
+        (isManager() &&
+          request.resource.data.role == 'delegate' &&
+          request.resource.data.managerId == currentManagerId());
+
+      allow update: if
+        isLegacyMigrationActive() ||
+        (isManager() && (
+          (request.auth.uid == userId &&
+            (!('managerId' in request.resource.data) ||
+              request.resource.data.managerId == currentManagerId())) ||
+          (resource.data.managerId == currentManagerId() &&
+            resource.data.role == 'delegate' &&
+            request.resource.data.managerId == currentManagerId())
+        )) ||
+        (isActiveUser() &&
+          request.auth.uid == userId &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['name', 'phone', 'photoUrl', 'avatarBase64', 'fcmTokens'])) ||
+        (isSignedIn() &&
+          request.auth.uid == userId &&
+          (!('managerId' in resource.data) || resource.data.managerId == '') &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['managerId']) &&
+          request.resource.data.managerId == legacyPrimaryManagerUid()) ||
+        (isDelegate() &&
+          request.auth.uid == userId &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['virtualBoxBalance']) &&
+          request.resource.data.virtualBoxBalance is number);
+
+      allow delete: if false;
     }
 
-    // الصندوق العام والصناديق الشهرية للمدير: سرية تماماً (لا قراءة للمندوب مطلقاً).
-    // يُسمح للمندوب النشط بـ create (إذا لم يكن الشهر مفتوحاً بعد) أو update بالاقتطاع عبر increment فقط.
-    match /manager_monthly_boxes/{monthKey} {
-      allow read: if isManager();
-      allow create: if isManager() || (isDelegate() &&
-        request.resource.data.totalCompanyTopUps == 0 &&
-        request.resource.data.currentBalance < 0);
-      allow update: if isManager() || (isDelegate() &&
-        request.resource.data.totalCompanyTopUps == resource.data.totalCompanyTopUps &&
-        request.resource.data.currentBalance < resource.data.currentBalance);
-      allow delete: if isManager();
+    // المحافظات والمواد (معزولة لكل مدير)
+    match /governorates/{docId} {
+      allow read: if isLegacyMigrationActive() ||
+        (isActiveUser() && resource.data.managerId == currentManagerId());
+      allow create, update: if isManager() &&
+        request.resource.data.managerId == currentManagerId();
+      allow delete: if isManager() &&
+        resource.data.managerId == currentManagerId();
     }
 
-    // صناديق المحافظات الشهرية الفرعية:
-    // المدير يقرأ ويدير جميع المحافظات، والمندوب يقتطع بصمت عند تسديد فاتورة أو مصروف لمحافظته.
-    match /governorate_monthly_boxes/{docId} {
-      allow read: if isManager();
-      allow create: if isManager() || (isDelegate() &&
-        request.resource.data.governorateId == currentUserDoc().data.governorateId &&
-        request.resource.data.totalTopUps == 0 &&
-        request.resource.data.currentBalance < 0);
-      allow update: if isManager() || (isDelegate() &&
-        resource.data.governorateId == currentUserDoc().data.governorateId &&
-        request.resource.data.totalTopUps == resource.data.totalTopUps &&
-        request.resource.data.currentBalance < resource.data.currentBalance);
-      allow delete: if isManager();
+    match /materials/{docId} {
+      allow read: if isLegacyMigrationActive() ||
+        (isActiveUser() && resource.data.managerId == currentManagerId());
+      allow create, update: if isManager() &&
+        request.resource.data.managerId == currentManagerId();
+      allow delete: if isManager() &&
+        resource.data.managerId == currentManagerId();
     }
 
-    // حركات الصناديق: المدير يقرأ ويدير الجميع، والمندوب ينشئ حركة تسديد أو مصروف فقط
+    // الصناديق الشهرية العامة للمدير فقط (سرية تامة ومعزولة لكل مدير)
+    match /manager_monthly_boxes/{monthId} {
+      allow read: if isLegacyMigrationActive() ||
+        (isManager() && resource.data.managerId == currentManagerId());
+      allow create, update: if
+        (isManager() && (
+          request.resource.data.managerId == currentManagerId() ||
+          isLegacyMigrationActive()
+        )) ||
+        (isDelegate() &&
+          request.resource.data.managerId == currentManagerId() &&
+          request.resource.data.keys().hasOnly([
+            'managerId', 'monthKey', 'year', 'month',
+            'totalCompanyTopUps', 'totalInvoiceDeductions',
+            'totalExpenseDeductions', 'currentBalance', 'updatedAt'
+          ]));
+      allow delete: if isLegacyMigrationActive();
+    }
+
+    // الصناديق الشهرية الفرعية للمحافظات (للمدير فقط ومعزولة لكل مدير)
+    match /governorate_monthly_boxes/{govMonthId} {
+      allow read: if isLegacyMigrationActive() ||
+        (isManager() && resource.data.managerId == currentManagerId());
+      allow create, update: if
+        (isManager() && (
+          request.resource.data.managerId == currentManagerId() ||
+          isLegacyMigrationActive()
+        )) ||
+        (isDelegate() &&
+          request.resource.data.managerId == currentManagerId() &&
+          request.resource.data.governorateId == currentUserDoc().data.governorateId &&
+          request.resource.data.keys().hasOnly([
+            'managerId', 'governorateId', 'governorateName', 'monthKey',
+            'year', 'month', 'totalTopUps', 'totalInvoiceDeductions',
+            'totalExpenseDeductions', 'currentBalance', 'updatedAt'
+          ]));
+      allow delete: if isLegacyMigrationActive();
+    }
+
+    // حركات الصناديق المالية (للمدير فقط ومعزولة + السماح بتعديل التعبئة من الشركة)
     match /box_transactions/{txId} {
-      allow read: if isManager() || (isDelegate() && resource.data.delegateId == request.auth.uid);
-      allow create: if isManager() || (isDelegate() && request.resource.data.performedByUid == request.auth.uid);
-      allow update, delete: if isManager();
+      allow read: if isLegacyMigrationActive() ||
+        (isManager() && resource.data.managerId == currentManagerId());
+      allow create: if isActiveUser() &&
+        request.resource.data.managerId == currentManagerId() &&
+        request.resource.data.performedByUid == request.auth.uid &&
+        request.resource.data.amount is number &&
+        request.resource.data.amount > 0;
+      allow update: if isLegacyMigrationActive() ||
+        (isManager() &&
+          resource.data.managerId == currentManagerId() &&
+          resource.data.type == 'company_topup' &&
+          request.resource.data.type == 'company_topup' &&
+          request.resource.data.managerId == currentManagerId() &&
+          request.resource.data.amount is number &&
+          request.resource.data.amount > 0 &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['monthKey', 'amount', 'notes', 'editedByUid', 'editedByName', 'updatedAt']));
+      allow delete: if false;
     }
 
-    // الثوابت: المحافظات والمواد (يقرأها الجميع ويديرها المدير حصراً)
-    match /governorates/{id} {
-      allow read: if isSignedIn();
-      allow write: if isManager();
-    }
-    match /materials/{id} {
-      allow read: if isSignedIn();
-      allow write: if isManager();
-    }
-
-    // الفواتير:
-    // - المدير يقرأ ويدير الجميع.
-    // - المندوب يقرأ فواتير محافظته المسندة إليه أو لجميع مندوبي المحافظة أو التي أنشأها.
-    // - المندوب ينشئ فاتورة أو يسدد فاتورة مخصصة له/لمحافظته، بينما التعديل والحذف للمدير فقط.
+    // الفواتير (معزولة بالكامل لكل مدير وفريقه)
     match /invoices/{invoiceId} {
-      allow read: if isManager() || (isDelegate() && (
-        resource.data.createdByUid == request.auth.uid ||
-        (resource.data.governorateId == currentUserDoc().data.governorateId &&
-         (resource.data.assignmentType == 'all_governorate_delegates' ||
-          resource.data.assignedDelegateId == request.auth.uid))
-      ));
-      allow create: if isManager() || (isDelegate() &&
-        request.resource.data.createdByUid == request.auth.uid &&
-        request.resource.data.governorateId == currentUserDoc().data.governorateId);
-      allow update: if isManager() || (isDelegate() &&
-        resource.data.status == 'unpaid' &&
-        request.resource.data.status == 'paid' &&
-        request.resource.data.paidByUid == request.auth.uid &&
-        resource.data.governorateId == currentUserDoc().data.governorateId &&
-        request.resource.data.governorateId == resource.data.governorateId &&
-        request.resource.data.invoiceMonthKey == resource.data.invoiceMonthKey &&
-        (resource.data.assignmentType == 'all_governorate_delegates' ||
-         resource.data.assignedDelegateId == request.auth.uid ||
-         resource.data.createdByUid == request.auth.uid));
-      allow delete: if isManager();
+      allow read: if isLegacyMigrationActive() ||
+        (isManager() && resource.data.managerId == currentManagerId()) ||
+        (isDelegate() &&
+          resource.data.managerId == currentManagerId() &&
+          (resource.data.createdByUid == request.auth.uid ||
+            (resource.data.governorateId == currentUserDoc().data.governorateId &&
+              (resource.data.assignmentType == 'all_gov_delegates' ||
+                resource.data.assignedDelegateId == request.auth.uid))));
+
+      allow create: if isActiveUser() &&
+        request.resource.data.managerId == currentManagerId() &&
+        request.resource.data.createdByUid == request.auth.uid;
+
+      allow update: if
+        isLegacyMigrationActive() ||
+        (isManager() &&
+          resource.data.managerId == currentManagerId() &&
+          request.resource.data.managerId == currentManagerId()) ||
+        (isDelegate() &&
+          resource.data.managerId == currentManagerId() &&
+          request.resource.data.managerId == currentManagerId() &&
+          resource.data.status == 'unpaid' &&
+          request.resource.data.status == 'paid' &&
+          request.resource.data.paidByUid == request.auth.uid &&
+          request.resource.data.paidByRole == 'delegate' &&
+          request.resource.data.paidFromSource == 'delegate_box' &&
+          (resource.data.createdByUid == request.auth.uid ||
+            (resource.data.governorateId == currentUserDoc().data.governorateId &&
+              (resource.data.assignmentType == 'all_gov_delegates' ||
+                resource.data.assignedDelegateId == request.auth.uid))) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'items', 'totalAmount', 'isPricePending', 'status',
+            'paidAt', 'paidByUid', 'paidByName', 'paidByRole',
+            'paidFromSource', 'deductedManagerMonthKey',
+            'receiptImageUrl', 'updatedAt'
+          ]));
+
+      allow delete: if false;
     }
 
-    // المصاريف الشخصية: المدير يرى الجميع، المندوب يرى وينشئ مصاريفه فقط
+    // المصاريف الشخصية (معزولة لكل مدير وفريقه)
     match /personal_expenses/{expenseId} {
-      allow read: if isManager() || (isDelegate() && resource.data.userId == request.auth.uid);
-      allow create: if isManager() || (isDelegate() && request.resource.data.userId == request.auth.uid);
-      allow update, delete: if isManager();
+      allow read: if isLegacyMigrationActive() ||
+        (isManager() && resource.data.managerId == currentManagerId()) ||
+        (isDelegate() &&
+          resource.data.managerId == currentManagerId() &&
+          resource.data.userId == request.auth.uid);
+      allow create: if isActiveUser() &&
+        request.resource.data.managerId == currentManagerId() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.amount is number &&
+        request.resource.data.amount > 0;
+      allow update: if isLegacyMigrationActive();
+      allow delete: if false;
     }
 
-    // سجل العمليات: القراءة للمدير وللمندوب (عملياته فقط)، والإنشاء للجميع
+    // سجل العمليات (معزول لكل مدير وفريقه)
     match /audit_logs/{logId} {
-      allow read: if isManager() || (isDelegate() && resource.data.actorUid == request.auth.uid);
-      allow create: if isActiveUser();
-      allow update, delete: if isManager();
+      allow read: if isLegacyMigrationActive() ||
+        (isManager() && resource.data.managerId == currentManagerId()) ||
+        (isDelegate() &&
+          resource.data.managerId == currentManagerId() &&
+          resource.data.actorUid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        request.resource.data.actorUid == request.auth.uid &&
+        (!('managerId' in request.resource.data) ||
+          request.resource.data.managerId == currentManagerId() ||
+          (request.resource.data.actionType in ['manager_bootstrap', 'manager_setup'] &&
+            request.resource.data.managerId == request.auth.uid));
+      allow update: if isLegacyMigrationActive();
+      allow delete: if false;
     }
 
-    // الإشعارات السحابية المعزولة حسب audienceTags
+    // الإشعارات السحابية (معزولة لكل مدير وفريقه)
     match /notifications/{notifId} {
-      allow read: if isManager() || (isDelegate() &&
-        resource.data.audienceTags.hasAny([
-          'USER_' + request.auth.uid,
-          'GOV_' + currentUserDoc().data.governorateId,
-          'DELEGATES',
-          'ALL'
-        ]));
-      allow create: if isActiveUser();
-      allow update: if isManager() || (isDelegate() &&
-        resource.data.audienceTags.hasAny([
-          'USER_' + request.auth.uid,
-          'GOV_' + currentUserDoc().data.governorateId,
-          'DELEGATES',
-          'ALL'
-        ]));
-      allow delete: if isManager();
+      allow read: if isLegacyMigrationActive() ||
+        (isManager() && resource.data.managerId == currentManagerId()) ||
+        (isDelegate() &&
+          resource.data.managerId == currentManagerId() &&
+          resource.data.audienceTags.hasAny(delegateAudienceTags()));
+      allow create: if isActiveUser() &&
+        request.resource.data.managerId == currentManagerId() &&
+        request.resource.data.createdByUid == request.auth.uid;
+      allow update: if
+        isLegacyMigrationActive() ||
+        (isActiveUser() &&
+          resource.data.managerId == currentManagerId() &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['readByUids']) &&
+          request.resource.data.readByUids.hasAll(resource.data.readByUids));
+      allow delete: if false;
     }
   }
 }

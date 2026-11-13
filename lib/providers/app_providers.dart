@@ -40,14 +40,15 @@ final currentUserProfileProvider = StreamProvider<AppUser?>((ref) {
 });
 
 /// مفتاح هوية مستقر يمنع إعادة تشغيل البث عند تغيّر الرصيد أو الاسم أو الصورة الشخصية
-final _userIdentityProvider =
-    Provider<({String? uid, UserRole? role, String? govId})>((ref) {
+final _userIdentityProvider = Provider<
+    ({String? uid, UserRole? role, String? govId, String? managerId})>((ref) {
   return ref.watch(
     currentUserProfileProvider.select(
       (s) => (
         uid: s.value?.uid,
         role: s.value?.role,
         govId: s.value?.governorateId,
+        managerId: s.value?.effectiveManagerId,
       ),
     ),
   );
@@ -68,49 +69,71 @@ final versionConfigProvider = StreamProvider<AppVersionConfig?>((ref) {
   return ref.watch(versionRepositoryProvider).watchVersionConfig();
 });
 
-// الثوابت (المحافظات والمواد فقط)
+// الثوابت (المحافظات والمواد فقط - معزولة لكل مدير)
 final governoratesProvider = StreamProvider<List<Governorate>>((ref) {
-  return ref.watch(masterDataRepositoryProvider).watchGovernorates();
+  final managerId = ref.watch(_userIdentityProvider).managerId ?? '';
+  if (managerId.isEmpty) return Stream.value(const []);
+  return ref
+      .watch(masterDataRepositoryProvider)
+      .watchGovernorates(managerId);
 });
 
 final materialsProvider = StreamProvider<List<MaterialEntity>>((ref) {
-  return ref.watch(masterDataRepositoryProvider).watchMaterials();
+  final managerId = ref.watch(_userIdentityProvider).managerId ?? '';
+  if (managerId.isEmpty) return Stream.value(const []);
+  return ref.watch(masterDataRepositoryProvider).watchMaterials(managerId);
 });
 
 // المندوبون (للمدير)
 final delegatesProvider = StreamProvider<List<AppUser>>((ref) {
   final identity = ref.watch(_userIdentityProvider);
-  if (identity.uid == null || identity.role != UserRole.manager) {
+  final managerId = identity.managerId ?? '';
+  if (identity.uid == null ||
+      identity.role != UserRole.manager ||
+      managerId.isEmpty) {
     return Stream.value(const []);
   }
-  return ref.watch(authRepositoryProvider).watchAllDelegates();
+  return ref.watch(authRepositoryProvider).watchAllDelegates(managerId);
 });
 
 // الصناديق الشهرية للمدير (محمية - للمدير فقط)
 final monthlyBoxesProvider = StreamProvider<List<MonthlyBox>>((ref) {
   final identity = ref.watch(_userIdentityProvider);
-  if (identity.uid == null || identity.role != UserRole.manager) {
+  final managerId = identity.managerId ?? '';
+  if (identity.uid == null ||
+      identity.role != UserRole.manager ||
+      managerId.isEmpty) {
     return Stream.value(const []);
   }
-  return ref.watch(boxesRepositoryProvider).watchMonthlyBoxes();
+  return ref.watch(boxesRepositoryProvider).watchMonthlyBoxes(managerId);
 });
 
 // الصناديق الشهرية الفرعية للمحافظات (للمدير فقط)
 final governorateMonthlyBoxesProvider =
     StreamProvider<List<GovernorateMonthlyBox>>((ref) {
   final identity = ref.watch(_userIdentityProvider);
-  if (identity.uid == null || identity.role != UserRole.manager) {
+  final managerId = identity.managerId ?? '';
+  if (identity.uid == null ||
+      identity.role != UserRole.manager ||
+      managerId.isEmpty) {
     return Stream.value(const []);
   }
-  return ref.watch(boxesRepositoryProvider).watchGovernorateMonthlyBoxes();
+  return ref
+      .watch(boxesRepositoryProvider)
+      .watchGovernorateMonthlyBoxes(managerId);
 });
 
 final allBoxTransactionsProvider = StreamProvider<List<BoxTransaction>>((ref) {
   final identity = ref.watch(_userIdentityProvider);
-  if (identity.uid == null || identity.role != UserRole.manager) {
+  final managerId = identity.managerId ?? '';
+  if (identity.uid == null ||
+      identity.role != UserRole.manager ||
+      managerId.isEmpty) {
     return Stream.value(const []);
   }
-  return ref.watch(boxesRepositoryProvider).watchAllBoxTransactions();
+  return ref
+      .watch(boxesRepositoryProvider)
+      .watchAllBoxTransactions(managerId);
 });
 
 // الفواتير

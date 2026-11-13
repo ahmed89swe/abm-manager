@@ -10,8 +10,13 @@ class MasterDataRepository {
 
   final FirebaseFirestore _firestore;
 
-  Stream<List<Governorate>> watchGovernorates() {
-    return _firestore.collection('governorates').snapshots().map((snap) {
+  Stream<List<Governorate>> watchGovernorates(String managerId) {
+    if (managerId.isEmpty) return Stream.value(const []);
+    return _firestore
+        .collection('governorates')
+        .where('managerId', isEqualTo: managerId)
+        .snapshots()
+        .map((snap) {
       final list = snap.docs
           .map((d) => Governorate.fromMap(d.data(), d.id))
           .toList();
@@ -20,8 +25,13 @@ class MasterDataRepository {
     });
   }
 
-  Stream<List<MaterialEntity>> watchMaterials() {
-    return _firestore.collection('materials').snapshots().map((snap) {
+  Stream<List<MaterialEntity>> watchMaterials(String managerId) {
+    if (managerId.isEmpty) return Stream.value(const []);
+    return _firestore
+        .collection('materials')
+        .where('managerId', isEqualTo: managerId)
+        .snapshots()
+        .map((snap) {
       final list = snap.docs
           .map((d) => MaterialEntity.fromMap(d.data(), d.id))
           .toList();
@@ -38,12 +48,17 @@ class MasterDataRepository {
     required String entityLabelAr,
     required String entityLabelEn,
   }) async {
+    final managerId = actor.effectiveManagerId;
+    final payload = {
+      ...data,
+      'managerId': managerId,
+    };
     final col = _firestore.collection(collection);
     final isNew = docId == null;
     if (isNew) {
-      await col.add(data);
+      await col.add(payload);
     } else {
-      await col.doc(docId).update(data);
+      await col.doc(docId).update(payload);
     }
 
     await AuditHelper.recordLog(
@@ -59,6 +74,7 @@ class MasterDataRepository {
     );
 
     await NotificationService.instance.sendCloudNotification(
+      managerId: managerId,
       titleAr: 'تحديث البيانات الأساسية',
       titleEn: 'Master Data Updated',
       bodyAr: isNew
@@ -69,7 +85,7 @@ class MasterDataRepository {
           : 'Updated $entityLabelEn',
       type: 'master_data',
       targetRole: 'all',
-      audienceTags: const ['MANAGERS', 'ALL'],
+      audienceTags: ['MANAGER_$managerId', 'ALL_$managerId'],
       createdByUid: actor.uid,
     );
   }

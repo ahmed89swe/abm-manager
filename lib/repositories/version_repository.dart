@@ -40,7 +40,9 @@ class VersionRepository {
       },
     );
 
+    final managerId = manager.effectiveManagerId;
     await NotificationService.instance.sendCloudNotification(
+      managerId: managerId,
       titleAr: 'يتوفر تحديث جديد للتطبيق (${config.latestVersionName})',
       titleEn: 'New App Update Available (${config.latestVersionName})',
       bodyAr: config.releaseNotesAr.isNotEmpty
@@ -51,7 +53,11 @@ class VersionRepository {
           : 'Please update the app to get the latest improvements.',
       type: 'app_update',
       targetRole: 'delegate',
-      audienceTags: const ['MANAGERS', 'DELEGATES', 'ALL'],
+      audienceTags: [
+        'MANAGER_$managerId',
+        'DELEGATES_$managerId',
+        'ALL_$managerId',
+      ],
       createdByUid: manager.uid,
     );
   }
