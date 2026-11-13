@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "128148997584",
+    "project_id": "abm-manager-sys",
+    "storage_bucket": "abm-manager-sys.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:128148997584:android:54f00f0723e2feba1e25d5",
+        "android_client_info": {
+          "package_name": "com.example.abm_manager"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDAM3K0rJOMIQ-d-vb6XKmgYA52QnHgCtQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

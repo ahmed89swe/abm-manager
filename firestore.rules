@@ -1,0 +1,165 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function currentUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isActiveUser() {
+      return isSignedIn() && currentUserDoc().data.isActive == true;
+    }
+
+    function isManager() {
+      return isActiveUser() && currentUserDoc().data.role == 'manager';
+    }
+
+    function isDelegate() {
+      return isActiveUser() && currentUserDoc().data.role == 'delegate';
+    }
+
+    // إعدادات الإصدار والتحديثات ووثيقة التهيئة الأولى
+    match /app_config/{docId} {
+      allow read: if true;
+      allow create: if isManager() || (
+        isSignedIn() &&
+        docId == 'bootstrap' &&
+        !exists(/databases/$(database)/documents/app_config/bootstrap) &&
+        getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'manager'
+      );
+      allow update, delete: if isManager();
+    }
+
+    // المستخدمون:
+    // - المدير يدير الجميع.
+    // - المندوب يقرأ ملفه، ويحدث الاسم الشخصي والهاتف والصورة الشخصية وتوكن الإشعارات،
+    //   أو يقلل رصيده عند الصرف (دون السماح بزيادة رصيده بنفسه أو تغيير دوره).
+    match /users/{userId} {
+      allow read: if isManager() || (isSignedIn() && request.auth.uid == userId);
+      allow create: if isManager() || (
+        isSignedIn() &&
+        request.auth.uid == userId &&
+        !exists(/databases/$(database)/documents/users/$(userId)) &&
+        !exists(/databases/$(database)/documents/app_config/bootstrap) &&
+        request.resource.data.role == 'manager'
+      );
+      allow update: if isManager() || (
+        isSignedIn() &&
+        request.auth.uid == userId &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.isActive == resource.data.isActive &&
+        request.resource.data.virtualBoxBalance <= resource.data.virtualBoxBalance
+      );
+      allow delete: if isManager();
+    }
+
+    // الصندوق العام والصناديق الشهرية للمدير: سرية تماماً (لا قراءة للمندوب مطلقاً).
+    // يُسمح للمندوب النشط بـ create (إذا لم يكن الشهر مفتوحاً بعد) أو update بالاقتطاع عبر increment فقط.
+    match /manager_monthly_boxes/{monthKey} {
+      allow read: if isManager();
+      allow create: if isManager() || (isDelegate() &&
+        request.resource.data.totalCompanyTopUps == 0 &&
+        request.resource.data.currentBalance < 0);
+      allow update: if isManager() || (isDelegate() &&
+        request.resource.data.totalCompanyTopUps == resource.data.totalCompanyTopUps &&
+        request.resource.data.currentBalance < resource.data.currentBalance);
+      allow delete: if isManager();
+    }
+
+    // صناديق المحافظات الشهرية الفرعية:
+    // المدير يقرأ ويدير جميع المحافظات، والمندوب يقتطع بصمت عند تسديد فاتورة أو مصروف لمحافظته.
+    match /governorate_monthly_boxes/{docId} {
+      allow read: if isManager();
+      allow create: if isManager() || (isDelegate() &&
+        request.resource.data.governorateId == currentUserDoc().data.governorateId &&
+        request.resource.data.totalTopUps == 0 &&
+        request.resource.data.currentBalance < 0);
+      allow update: if isManager() || (isDelegate() &&
+        resource.data.governorateId == currentUserDoc().data.governorateId &&
+        request.resource.data.totalTopUps == resource.data.totalTopUps &&
+        request.resource.data.currentBalance < resource.data.currentBalance);
+      allow delete: if isManager();
+    }
+
+    // حركات الصناديق: المدير يقرأ ويدير الجميع، والمندوب ينشئ حركة تسديد أو مصروف فقط
+    match /box_transactions/{txId} {
+      allow read: if isManager() || (isDelegate() && resource.data.delegateId == request.auth.uid);
+      allow create: if isManager() || (isDelegate() && request.resource.data.performedByUid == request.auth.uid);
+      allow update, delete: if isManager();
+    }
+
+    // الثوابت: المحافظات والمواد (يقرأها الجميع ويديرها المدير حصراً)
+    match /governorates/{id} {
+      allow read: if isSignedIn();
+      allow write: if isManager();
+    }
+    match /materials/{id} {
+      allow read: if isSignedIn();
+      allow write: if isManager();
+    }
+
+    // الفواتير:
+    // - المدير يقرأ ويدير الجميع.
+    // - المندوب يقرأ فواتير محافظته المسندة إليه أو لجميع مندوبي المحافظة أو التي أنشأها.
+    // - المندوب ينشئ فاتورة أو يسدد فاتورة مخصصة له/لمحافظته، بينما التعديل والحذف للمدير فقط.
+    match /invoices/{invoiceId} {
+      allow read: if isManager() || (isDelegate() && (
+        resource.data.createdByUid == request.auth.uid ||
+        (resource.data.governorateId == currentUserDoc().data.governorateId &&
+         (resource.data.assignmentType == 'all_governorate_delegates' ||
+          resource.data.assignedDelegateId == request.auth.uid))
+      ));
+      allow create: if isManager() || (isDelegate() &&
+        request.resource.data.createdByUid == request.auth.uid &&
+        request.resource.data.governorateId == currentUserDoc().data.governorateId);
+      allow update: if isManager() || (isDelegate() &&
+        resource.data.status == 'unpaid' &&
+        request.resource.data.status == 'paid' &&
+        request.resource.data.paidByUid == request.auth.uid &&
+        resource.data.governorateId == currentUserDoc().data.governorateId &&
+        request.resource.data.governorateId == resource.data.governorateId &&
+        request.resource.data.invoiceMonthKey == resource.data.invoiceMonthKey &&
+        (resource.data.assignmentType == 'all_governorate_delegates' ||
+         resource.data.assignedDelegateId == request.auth.uid ||
+         resource.data.createdByUid == request.auth.uid));
+      allow delete: if isManager();
+    }
+
+    // المصاريف الشخصية: المدير يرى الجميع، المندوب يرى وينشئ مصاريفه فقط
+    match /personal_expenses/{expenseId} {
+      allow read: if isManager() || (isDelegate() && resource.data.userId == request.auth.uid);
+      allow create: if isManager() || (isDelegate() && request.resource.data.userId == request.auth.uid);
+      allow update, delete: if isManager();
+    }
+
+    // سجل العمليات: القراءة للمدير وللمندوب (عملياته فقط)، والإنشاء للجميع
+    match /audit_logs/{logId} {
+      allow read: if isManager() || (isDelegate() && resource.data.actorUid == request.auth.uid);
+      allow create: if isActiveUser();
+      allow update, delete: if isManager();
+    }
+
+    // الإشعارات السحابية المعزولة حسب audienceTags
+    match /notifications/{notifId} {
+      allow read: if isManager() || (isDelegate() &&
+        resource.data.audienceTags.hasAny([
+          'USER_' + request.auth.uid,
+          'GOV_' + currentUserDoc().data.governorateId,
+          'DELEGATES',
+          'ALL'
+        ]));
+      allow create: if isActiveUser();
+      allow update: if isManager() || (isDelegate() &&
+        resource.data.audienceTags.hasAny([
+          'USER_' + request.auth.uid,
+          'GOV_' + currentUserDoc().data.governorateId,
+          'DELEGATES',
+          'ALL'
+        ]));
+      allow delete: if isManager();
+    }
+  }
+}

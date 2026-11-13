@@ -1,0 +1,123 @@
+import 'package:abm_manager/core/services/server_time_service.dart';
+import 'package:abm_manager/features/version_control/version_check_gate.dart';
+import 'package:abm_manager/models/app_user.dart';
+import 'package:abm_manager/models/invoice_model.dart';
+import 'package:abm_manager/models/monthly_box.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  group('MonthlyBox, GovernorateMonthlyBox & General Box financial logic', () {
+    test('General box sums monthly boxes including negative balances', () {
+      const juneBox = MonthlyBox(
+        monthKey: '2026-06',
+        year: 2026,
+        month: 6,
+        totalCompanyTopUps: 1000000,
+        totalInvoiceDeductions: 1200000,
+        totalExpenseDeductions: 0,
+        currentBalance: -200000,
+      );
+      const julyBox = MonthlyBox(
+        monthKey: '2026-07',
+        year: 2026,
+        month: 7,
+        totalCompanyTopUps: 2000000,
+        totalInvoiceDeductions: 0,
+        totalExpenseDeductions: 0,
+        currentBalance: 2000000,
+      );
+
+      final generalBalance = [juneBox, julyBox]
+          .fold<double>(0.0, (acc, b) => acc + b.currentBalance);
+      expect(generalBalance, 1800000);
+      expect(juneBox.currentBalance.isNegative, isTrue);
+    });
+
+    test('GovernorateMonthlyBox docId and balances calculate properly', () {
+      expect(
+        GovernorateMonthlyBox.docId('baghdad', '2026-05'),
+        'baghdad_2026-05',
+      );
+      const govBox = GovernorateMonthlyBox(
+        id: 'baghdad_2026-05',
+        governorateId: 'baghdad',
+        governorateName: 'بغداد',
+        monthKey: '2026-05',
+        year: 2026,
+        month: 5,
+        totalTopUps: 500000,
+        totalInvoiceDeductions: 150000,
+        totalExpenseDeductions: 50000,
+        currentBalance: 300000,
+      );
+      expect(govBox.totalDeductions, 200000);
+      expect(govBox.currentBalance, 300000);
+    });
+
+    test('ServerTimeService monthKey formatting and parsing', () {
+      final date = DateTime(2026, 6, 15);
+      final key = ServerTimeService.toMonthKey(date);
+      expect(key, '2026-06');
+
+      final parsed = ServerTimeService.parseMonthKey(key);
+      expect(parsed.year, 2026);
+      expect(parsed.month, 6);
+    });
+  });
+
+  group('Version comparison without build number', () {
+    test('isVersionOlder compares semantic versions cleanly', () {
+      expect(isVersionOlder('1.0.0', '1.0.1'), isTrue);
+      expect(isVersionOlder('1.0.9', '1.1.0'), isTrue);
+      expect(isVersionOlder('1.0.0+1', '2.0.0'), isTrue);
+      expect(isVersionOlder('1.2.0', '1.2.0'), isFalse);
+      expect(isVersionOlder('1.3.0', '1.2.9'), isFalse);
+    });
+  });
+
+  group('Invoice items & optional price logic', () {
+    test('Supports multi-material calculation and optional pending prices', () {
+      const item1 = InvoiceItem(
+        materialId: 'm1',
+        materialName: 'Panadol',
+        quantity: 10,
+        unitPrice: 2500,
+      );
+      const item2 = InvoiceItem(
+        materialId: 'm2',
+        materialName: 'Amoxicillin',
+        quantity: 5,
+        unitPrice: null,
+      );
+
+      expect(item1.totalPrice, 25000);
+      expect(item2.hasPrice, isFalse);
+      expect(item2.totalPrice, 0);
+
+      final items = [item1, item2];
+      final total = items.fold<double>(0.0, (acc, i) => acc + i.totalPrice);
+      expect(total, 25000);
+    });
+
+    test('User roles and assignment types serialize cleanly', () {
+      const manager = AppUser(
+        uid: 'u1',
+        name: 'Manager',
+        email: 'm@abm.com',
+        phone: '0770',
+        role: UserRole.manager,
+      );
+      expect(manager.isManager, isTrue);
+      expect(manager.isDelegate, isFalse);
+
+      expect(
+        InvoiceAssignmentType.fromString('all_governorate_delegates'),
+        InvoiceAssignmentType.allGovernorateDelegates,
+      );
+      expect(
+        InvoiceAssignmentType.specificDelegate.firestoreValue,
+        'specific_delegate',
+      );
+    });
+  });
+}
