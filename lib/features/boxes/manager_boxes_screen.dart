@@ -31,7 +31,12 @@ class _ManagerBoxesScreenState extends ConsumerState<ManagerBoxesScreen> {
         ref.watch(governorateMonthlyBoxesProvider).value ?? const [];
     final allTx = ref.watch(allBoxTransactionsProvider).value ?? const [];
     final companyTopUps = allTx
-        .where((t) => t.type == BoxTransactionType.companyTopUp)
+        .where(
+          (t) =>
+              t.type == BoxTransactionType.companyTopUp ||
+              t.type == BoxTransactionType.governorateTopUp ||
+              t.type == BoxTransactionType.delegateVirtualTopUp,
+        )
         .toList();
     final governorates = ref.watch(governoratesProvider).value ?? const [];
     final currentMonthKey = ref.watch(currentMonthKeyProvider).value;
@@ -208,6 +213,25 @@ class _ManagerBoxesScreenState extends ConsumerState<ManagerBoxesScreen> {
                     maxColumns: 2,
                     twoColumnsBreakpoint: 760,
                     children: companyTopUps.map((tx) {
+                      final isCompany =
+                          tx.type == BoxTransactionType.companyTopUp;
+                      final isGovTopUp =
+                          tx.type == BoxTransactionType.governorateTopUp;
+                      final typeLabel = isCompany
+                          ? l10n.tr('company_topup')
+                          : isGovTopUp
+                              ? l10n.tr('topup_governorate')
+                              : l10n.tr('topup_delegate');
+                      final targetParts = <String>[
+                        typeLabel,
+                        if ((tx.governorateName ?? '').isNotEmpty)
+                          tx.governorateName!,
+                        if ((tx.delegateName ?? '').isNotEmpty)
+                          tx.delegateName!,
+                        tx.performedByName,
+                        if (tx.notes != null && tx.notes!.isNotEmpty) tx.notes!,
+                      ];
+
                       return Card(
                         margin: EdgeInsets.zero,
                         child: ListTile(
@@ -252,23 +276,43 @@ class _ManagerBoxesScreenState extends ConsumerState<ManagerBoxesScreen> {
                             ],
                           ),
                           subtitle: Text(
-                            '${tx.performedByName}${tx.notes != null && tx.notes!.isNotEmpty ? " • ${tx.notes}" : ""}\n${tx.createdAt != null ? AppFormatters.formatDate(tx.createdAt!, includeTime: true) : ""}',
+                            '${targetParts.join(" • ")}\n${tx.createdAt != null ? AppFormatters.formatDate(tx.createdAt!, includeTime: true) : ""}',
                           ),
                           isThreeLine: true,
-                          trailing: IconButton(
-                            tooltip: l10n.tr('edit_company_topup'),
-                            icon: const Icon(Icons.edit_outlined),
-                            onPressed: () => openCompanyTopUpDialog(
-                              context: context,
-                              ref: ref,
-                              existingTransaction: tx,
-                            ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (isCompany)
+                                IconButton(
+                                  tooltip: l10n.tr('edit_company_topup'),
+                                  icon: const Icon(Icons.edit_outlined),
+                                  onPressed: () => openCompanyTopUpDialog(
+                                    context: context,
+                                    ref: ref,
+                                    existingTransaction: tx,
+                                  ),
+                                ),
+                              IconButton(
+                                tooltip: l10n.tr('delete_topup'),
+                                icon: const Icon(
+                                  Icons.delete_outline_rounded,
+                                  color: AppTheme.dangerColor,
+                                ),
+                                onPressed: () => confirmAndDeleteTopUpTransaction(
+                                  context,
+                                  ref,
+                                  tx,
+                                ),
+                              ),
+                            ],
                           ),
-                          onTap: () => openCompanyTopUpDialog(
-                            context: context,
-                            ref: ref,
-                            existingTransaction: tx,
-                          ),
+                          onTap: isCompany
+                              ? () => openCompanyTopUpDialog(
+                                    context: context,
+                                    ref: ref,
+                                    existingTransaction: tx,
+                                  )
+                              : null,
                         ),
                       );
                     }).toList(),
@@ -330,12 +374,69 @@ class _ManagerBoxesScreenState extends ConsumerState<ManagerBoxesScreen> {
   }
 }
 
-/// نافذة تعبئة أو تعديل تعبئة صندوق شهري عام (يدعم اختيار الشهر الحالي أو أي شهر سابق)
+/// نافذة تأكيد حذف أي عملية تعبئة وعكس أثرها المالي على الصناديق المرتبطة
+Future<bool> confirmAndDeleteTopUpTransaction(
+  BuildContext context,
+  WidgetRef ref,
+  BoxTransaction txDoc,
+) async {
+  final l10n = AppLocalizations.of(context);
+  final manager = ref.read(currentUserProfileProvider).value;
+  if (manager == null || !manager.isManager) return false;
+  final messenger = ScaffoldMessenger.maybeOf(context);
+
+  final targetInfo = <String>[
+    '${l10n.tr('amount')}: ${AppFormatters.formatMoney(txDoc.amount, currency: l10n.tr('currency'))}',
+    '${l10n.tr('select_month')}: ${AppFormatters.formatMonthLabel(txDoc.monthKey, isAr: l10n.isAr)}',
+    if ((txDoc.governorateName ?? '').isNotEmpty)
+      '${l10n.tr('governorate')}: ${txDoc.governorateName}',
+    if ((txDoc.delegateName ?? '').isNotEmpty)
+      '${l10n.tr('delegate_name')}: ${txDoc.delegateName}',
+  ].join('\n');
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dCtx) => AlertDialog(
+      title: Text(l10n.tr('delete_topup')),
+      content: Text('${l10n.tr('delete_topup_confirm')}\n\n$targetInfo'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dCtx, false),
+          child: Text(l10n.tr('cancel')),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: AppTheme.dangerColor,
+          ),
+          onPressed: () => Navigator.pop(dCtx, true),
+          child: Text(l10n.tr('delete')),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return false;
+  try {
+    await ref.read(boxesRepositoryProvider).deleteTopUpTransaction(
+          manager: manager,
+          txDoc: txDoc,
+        );
+    messenger?.showSnackBar(
+      SnackBar(content: Text(l10n.tr('topup_deleted'))),
+    );
+    return true;
+  } catch (e) {
+    messenger?.showSnackBar(SnackBar(content: Text('$e')));
+    return false;
+  }
+}
+
+/// نافذة تعبئة أو تعديل تعبئة صندوق شهري من الشركة (بتحديد المحافظة والشهر)
 void openCompanyTopUpDialog({
   required BuildContext context,
   required WidgetRef ref,
   String? currentMonthKey,
   String? initialMonthKey,
+  String? initialGovernorateId,
   BoxTransaction? existingTransaction,
 }) {
   final l10n = AppLocalizations.of(context);
@@ -360,111 +461,186 @@ void openCompanyTopUpDialog({
 
   int selectedYear = parsedSeed.year;
   int selectedMonth = parsedSeed.month;
+  String? selectedGovId = existingTransaction?.governorateId ?? initialGovernorateId;
+  bool didInitGov = false;
   bool busy = false;
 
   showDialog(
     context: context,
-    builder: (ctx) => StatefulBuilder(
-      builder: (ctx, setState) => AlertDialog(
-        title: Text(
-          l10n.tr(isEditing ? 'edit_company_topup' : 'company_topup'),
-        ),
-        content: Form(
-          key: formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                MonthYearSelectorRow(
-                  selectedYear: selectedYear,
-                  selectedMonth: selectedMonth,
-                  maxYear: nowDate.year + 1,
-                  onYearChanged: (y) => setState(() => selectedYear = y),
-                  onMonthChanged: (m) => setState(() => selectedMonth = m),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: amountCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  decoration: InputDecoration(
-                    labelText: l10n.tr('amount'),
-                    suffixText: l10n.tr('currency'),
-                  ),
-                  validator: (v) {
-                    final val = double.tryParse(v?.trim() ?? '');
-                    if (val == null || val <= 0) {
-                      return l10n.tr('required_field');
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: notesCtrl,
-                  decoration: InputDecoration(labelText: l10n.tr('notes')),
-                ),
-              ],
+    builder: (ctx) => Consumer(
+      builder: (ctx, dialogRef, _) {
+        final governorates =
+            dialogRef.watch(governoratesProvider).value ?? const <Governorate>[];
+        if (!didInitGov) {
+          didInitGov = true;
+          if (selectedGovId != null &&
+              !governorates.any((g) => g.id == selectedGovId)) {
+            selectedGovId = null;
+          }
+          if (!isEditing && selectedGovId == null && governorates.length == 1) {
+            selectedGovId = governorates.first.id;
+          }
+        }
+
+        return StatefulBuilder(
+          builder: (ctx, setState) => AlertDialog(
+            title: Text(
+              l10n.tr(isEditing ? 'edit_company_topup' : 'company_topup'),
             ),
+            content: Form(
+              key: formKey,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (governorates.isNotEmpty) ...[
+                      DropdownButtonFormField<String?>(
+                        initialValue: governorates.any((g) => g.id == selectedGovId)
+                            ? selectedGovId
+                            : null,
+                        isExpanded: true,
+                        decoration: InputDecoration(
+                          labelText: '${l10n.tr('governorate')} *',
+                          prefixIcon: const Icon(Icons.location_city_outlined),
+                        ),
+                        items: [
+                          if (isEditing &&
+                              (existingTransaction.governorateId ?? '').isEmpty)
+                            DropdownMenuItem<String?>(
+                              value: null,
+                              child: Text(l10n.tr('no_governorate_legacy')),
+                            ),
+                          ...governorates.map(
+                            (g) => DropdownMenuItem<String?>(
+                              value: g.id,
+                              child: Text(g.displayName(l10n.isAr)),
+                            ),
+                          ),
+                        ],
+                        onChanged: (v) => setState(() => selectedGovId = v),
+                        validator: (v) {
+                          if (isEditing &&
+                              (existingTransaction.governorateId ?? '').isEmpty) {
+                            return null;
+                          }
+                          if (governorates.isNotEmpty &&
+                              (v == null || v.isEmpty)) {
+                            return l10n.tr('required_field');
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    MonthYearSelectorRow(
+                      selectedYear: selectedYear,
+                      selectedMonth: selectedMonth,
+                      maxYear: nowDate.year + 1,
+                      onYearChanged: (y) => setState(() => selectedYear = y),
+                      onMonthChanged: (m) => setState(() => selectedMonth = m),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: amountCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: l10n.tr('amount'),
+                        suffixText: l10n.tr('currency'),
+                      ),
+                      validator: (v) {
+                        final val = double.tryParse(v?.trim() ?? '');
+                        if (val == null || val <= 0) {
+                          return l10n.tr('required_field');
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: notesCtrl,
+                      decoration: InputDecoration(labelText: l10n.tr('notes')),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: busy ? null : () => Navigator.pop(ctx),
+                child: Text(l10n.tr('cancel')),
+              ),
+              FilledButton(
+                onPressed: busy
+                    ? null
+                    : () async {
+                        if (!formKey.currentState!.validate()) return;
+                        final manager =
+                            ref.read(currentUserProfileProvider).value;
+                        if (manager == null) return;
+                        setState(() => busy = true);
+                        try {
+                          final mKey = MonthYearSelectorRow.toMonthKey(
+                            selectedYear,
+                            selectedMonth,
+                          );
+                          final amount = double.parse(amountCtrl.text.trim());
+                          final notes = notesCtrl.text.trim();
+                          Governorate? pickedGov;
+                          if (selectedGovId != null) {
+                            for (final g in governorates) {
+                              if (g.id == selectedGovId) {
+                                pickedGov = g;
+                                break;
+                              }
+                            }
+                          }
+                          final govId = pickedGov?.id;
+                          final govName = pickedGov?.displayName(l10n.isAr);
+
+                          final repo = ref.read(boxesRepositoryProvider);
+                          if (isEditing) {
+                            await repo.editCompanyTopUp(
+                              manager: manager,
+                              oldTx: existingTransaction,
+                              newMonthKey: mKey,
+                              newAmount: amount,
+                              newGovernorateId: govId,
+                              newGovernorateName: govName,
+                              notes: notes,
+                            );
+                          } else {
+                            await repo.topUpMonthlyBoxFromCompany(
+                              manager: manager,
+                              monthKey: mKey,
+                              amount: amount,
+                              governorateId: govId,
+                              governorateName: govName,
+                              notes: notes,
+                            );
+                          }
+                          if (ctx.mounted) Navigator.pop(ctx);
+                        } catch (e) {
+                          if (ctx.mounted) {
+                            ScaffoldMessenger.of(ctx)
+                                .showSnackBar(SnackBar(content: Text('$e')));
+                          }
+                        } finally {
+                          if (ctx.mounted) setState(() => busy = false);
+                        }
+                      },
+                child: Text(l10n.tr('confirm')),
+              ),
+            ],
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: busy ? null : () => Navigator.pop(ctx),
-            child: Text(l10n.tr('cancel')),
-          ),
-          FilledButton(
-            onPressed: busy
-                ? null
-                : () async {
-                    if (!formKey.currentState!.validate()) return;
-                    final manager = ref.read(currentUserProfileProvider).value;
-                    if (manager == null) return;
-                    setState(() => busy = true);
-                    try {
-                      final mKey = MonthYearSelectorRow.toMonthKey(
-                        selectedYear,
-                        selectedMonth,
-                      );
-                      final amount = double.parse(amountCtrl.text.trim());
-                      final notes = notesCtrl.text.trim();
-                      final repo = ref.read(boxesRepositoryProvider);
-                      if (isEditing) {
-                        await repo.editCompanyTopUp(
-                          manager: manager,
-                          oldTx: existingTransaction,
-                          newMonthKey: mKey,
-                          newAmount: amount,
-                          notes: notes,
-                        );
-                      } else {
-                        await repo.topUpMonthlyBoxFromCompany(
-                          manager: manager,
-                          monthKey: mKey,
-                          amount: amount,
-                          notes: notes,
-                        );
-                      }
-                      if (ctx.mounted) Navigator.pop(ctx);
-                    } catch (e) {
-                      if (ctx.mounted) {
-                        ScaffoldMessenger.of(ctx)
-                            .showSnackBar(SnackBar(content: Text('$e')));
-                      }
-                    } finally {
-                      if (ctx.mounted) setState(() => busy = false);
-                    }
-                  },
-            child: Text(l10n.tr('confirm')),
-          ),
-        ],
-      ),
+        );
+      },
     ),
   );
 }
 
-/// نافذة تعبئة صندوق محافظة فرعي لشهر محدد (يدعم الأشهر الحالية والسابقة)
+/// نافذة تعبئة صندوق محافظة لشهر محدد (مع خيار إضافته للصندوق الشهري العام أيضاً)
 void openGovernorateTopUpDialog({
   required BuildContext context,
   required WidgetRef ref,
@@ -486,97 +662,161 @@ void openGovernorateTopUpDialog({
 
   int selectedYear = parsedSeed.year;
   int selectedMonth = parsedSeed.month;
+  String selectedGovId = governorate.id;
+  bool alsoCreditCompanyBox = true;
   bool busy = false;
 
   showDialog(
     context: context,
-    builder: (ctx) => StatefulBuilder(
-      builder: (ctx, setState) => AlertDialog(
-        title: Text(
-          '${l10n.tr('topup_governorate')} • ${governorate.displayName(l10n.isAr)}',
-        ),
-        content: Form(
-          key: formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                MonthYearSelectorRow(
-                  selectedYear: selectedYear,
-                  selectedMonth: selectedMonth,
-                  maxYear: nowDate.year + 1,
-                  onYearChanged: (y) => setState(() => selectedYear = y),
-                  onMonthChanged: (m) => setState(() => selectedMonth = m),
+    builder: (ctx) => Consumer(
+      builder: (ctx, dialogRef, _) {
+        final governorates =
+            dialogRef.watch(governoratesProvider).value ?? [governorate];
+        if (!governorates.any((g) => g.id == selectedGovId)) {
+          governorates.add(governorate);
+        }
+
+        return StatefulBuilder(
+          builder: (ctx, setState) => AlertDialog(
+            title: Text(l10n.tr('topup_governorate')),
+            content: Form(
+              key: formKey,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedGovId,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: '${l10n.tr('governorate')} *',
+                        prefixIcon: const Icon(Icons.location_city_outlined),
+                      ),
+                      items: governorates
+                          .map(
+                            (g) => DropdownMenuItem<String>(
+                              value: g.id,
+                              child: Text(g.displayName(l10n.isAr)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) {
+                        if (v != null) setState(() => selectedGovId = v);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    MonthYearSelectorRow(
+                      selectedYear: selectedYear,
+                      selectedMonth: selectedMonth,
+                      maxYear: nowDate.year + 1,
+                      onYearChanged: (y) => setState(() => selectedYear = y),
+                      onMonthChanged: (m) => setState(() => selectedMonth = m),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: amountCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: l10n.tr('amount'),
+                        suffixText: l10n.tr('currency'),
+                      ),
+                      validator: (v) {
+                        final val = double.tryParse(v?.trim() ?? '');
+                        if (val == null || val <= 0) {
+                          return l10n.tr('required_field');
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: notesCtrl,
+                      decoration: InputDecoration(labelText: l10n.tr('notes')),
+                    ),
+                    const SizedBox(height: 8),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        l10n.tr('also_credit_general_box'),
+                        style: const TextStyle(fontSize: 13.5),
+                      ),
+                      subtitle: Text(
+                        l10n.tr('also_credit_general_box_hint'),
+                        style: const TextStyle(fontSize: 11.5),
+                      ),
+                      value: alsoCreditCompanyBox,
+                      onChanged: (v) =>
+                          setState(() => alsoCreditCompanyBox = v),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: amountCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  decoration: InputDecoration(
-                    labelText: l10n.tr('amount'),
-                    suffixText: l10n.tr('currency'),
-                  ),
-                  validator: (v) {
-                    final val = double.tryParse(v?.trim() ?? '');
-                    if (val == null || val <= 0) {
-                      return l10n.tr('required_field');
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: notesCtrl,
-                  decoration: InputDecoration(labelText: l10n.tr('notes')),
-                ),
-              ],
+              ),
             ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: busy ? null : () => Navigator.pop(ctx),
-            child: Text(l10n.tr('cancel')),
-          ),
-          FilledButton(
-            onPressed: busy
-                ? null
-                : () async {
-                    if (!formKey.currentState!.validate()) return;
-                    final manager = ref.read(currentUserProfileProvider).value;
-                    if (manager == null) return;
-                    setState(() => busy = true);
-                    try {
-                      final mKey = MonthYearSelectorRow.toMonthKey(
-                        selectedYear,
-                        selectedMonth,
-                      );
-                      await ref
-                          .read(boxesRepositoryProvider)
-                          .topUpGovernorateMonthlyBox(
-                            manager: manager,
-                            governorateId: governorate.id,
-                            governorateName: governorate.displayName(l10n.isAr),
-                            monthKey: mKey,
-                            amount: double.parse(amountCtrl.text.trim()),
-                            notes: notesCtrl.text.trim(),
+            actions: [
+              TextButton(
+                onPressed: busy ? null : () => Navigator.pop(ctx),
+                child: Text(l10n.tr('cancel')),
+              ),
+              FilledButton(
+                onPressed: busy
+                    ? null
+                    : () async {
+                        if (!formKey.currentState!.validate()) return;
+                        final manager =
+                            ref.read(currentUserProfileProvider).value;
+                        if (manager == null) return;
+                        setState(() => busy = true);
+                        try {
+                          final mKey = MonthYearSelectorRow.toMonthKey(
+                            selectedYear,
+                            selectedMonth,
                           );
-                      if (ctx.mounted) Navigator.pop(ctx);
-                    } catch (e) {
-                      if (ctx.mounted) {
-                        ScaffoldMessenger.of(ctx)
-                            .showSnackBar(SnackBar(content: Text('$e')));
-                      }
-                    } finally {
-                      if (ctx.mounted) setState(() => busy = false);
-                    }
-                  },
-            child: Text(l10n.tr('confirm')),
+                          final pickedGov = governorates.firstWhere(
+                            (g) => g.id == selectedGovId,
+                            orElse: () => governorate,
+                          );
+                          final govName = pickedGov.displayName(l10n.isAr);
+                          final amount = double.parse(amountCtrl.text.trim());
+                          final notes = notesCtrl.text.trim();
+                          final repo = ref.read(boxesRepositoryProvider);
+
+                          if (alsoCreditCompanyBox) {
+                            await repo.topUpMonthlyBoxFromCompany(
+                              manager: manager,
+                              monthKey: mKey,
+                              amount: amount,
+                              governorateId: pickedGov.id,
+                              governorateName: govName,
+                              notes: notes,
+                            );
+                          } else {
+                            await repo.topUpGovernorateMonthlyBox(
+                              manager: manager,
+                              governorateId: pickedGov.id,
+                              governorateName: govName,
+                              monthKey: mKey,
+                              amount: amount,
+                              notes: notes,
+                            );
+                          }
+                          if (ctx.mounted) Navigator.pop(ctx);
+                        } catch (e) {
+                          if (ctx.mounted) {
+                            ScaffoldMessenger.of(ctx)
+                                .showSnackBar(SnackBar(content: Text('$e')));
+                          }
+                        } finally {
+                          if (ctx.mounted) setState(() => busy = false);
+                        }
+                      },
+                child: Text(l10n.tr('confirm')),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     ),
   );
 }

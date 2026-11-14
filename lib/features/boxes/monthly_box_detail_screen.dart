@@ -161,13 +161,17 @@ class MonthlyBoxDetailScreen extends ConsumerWidget {
                     children: transactions.map((tx) {
                       final isTopUp =
                           tx.type == BoxTransactionType.companyTopUp ||
-                              tx.type == BoxTransactionType.governorateTopUp;
+                              tx.type == BoxTransactionType.governorateTopUp ||
+                              tx.type ==
+                                  BoxTransactionType.delegateVirtualTopUp;
                       final color =
                           isTopUp ? AppTheme.successColor : AppTheme.dangerColor;
                       final sign = isTopUp ? '+' : '-';
 
                       final isCompanyTopUp =
                           tx.type == BoxTransactionType.companyTopUp;
+                      final isDeletableTopUp = isTopUp &&
+                          (user?.isManager ?? false);
                       final isEditableCompanyTopUp =
                           isCompanyTopUp && (user?.isManager ?? false);
 
@@ -239,6 +243,22 @@ class MonthlyBoxDetailScreen extends ConsumerWidget {
                                     context: context,
                                     ref: ref,
                                     existingTransaction: tx,
+                                  ),
+                                ),
+                              ],
+                              if (isDeletableTopUp) ...[
+                                IconButton(
+                                  tooltip: l10n.tr('delete_topup'),
+                                  icon: const Icon(
+                                    Icons.delete_outline_rounded,
+                                    size: 20,
+                                    color: AppTheme.dangerColor,
+                                  ),
+                                  onPressed: () =>
+                                      confirmAndDeleteTopUpTransaction(
+                                    context,
+                                    ref,
+                                    tx,
                                   ),
                                 ),
                               ],

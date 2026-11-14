@@ -11,6 +11,7 @@ import '../../models/master_data_models.dart';
 import '../../providers/app_providers.dart';
 import '../../services/receipt_storage_service.dart';
 import '../../widgets/common_widgets.dart';
+import 'invoice_card_and_sheet.dart';
 
 class _DraftItem {
   _DraftItem({
@@ -592,6 +593,41 @@ class _CreateEditInvoiceScreenState
                                 }
                               },
                             ),
+                          ] else ...[
+                            const SizedBox(height: 8),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .primary
+                                    .withValues(alpha: 0.08),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.account_balance_wallet_outlined,
+                                    size: 18,
+                                    color:
+                                        Theme.of(context).colorScheme.primary,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      '${l10n.tr('delegate_pay_box_hint')}: ${user.governorateName ?? '-'} • ${AppFormatters.formatMonthLabel(ServerTimeService.toMonthKey(_invoiceDate), isAr: l10n.isAr)}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ],
                           const SizedBox(height: 12),
                           Text(
@@ -685,6 +721,26 @@ class _CreateEditInvoiceScreenState
         title: Text(
           _isEditMode ? l10n.tr('edit_invoice') : l10n.tr('add_invoice'),
         ),
+        actions: [
+          if (_isEditMode && user.isManager)
+            IconButton(
+              tooltip: l10n.tr('delete_invoice'),
+              icon: const Icon(Icons.delete_outline_rounded),
+              onPressed: _isSaving
+                  ? null
+                  : () async {
+                      final deleted = await confirmAndDeleteInvoice(
+                        context,
+                        ref,
+                        widget.existingInvoice!,
+                        user,
+                      );
+                      if (deleted && context.mounted) {
+                        Navigator.pop(context);
+                      }
+                    },
+            ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: ResponsiveBreakpoints.pagePadding(context),

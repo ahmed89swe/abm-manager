@@ -4,6 +4,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../models/app_user.dart';
+import '../../models/invoice_model.dart';
 import '../../providers/app_providers.dart';
 import '../../widgets/common_widgets.dart';
 import 'create_edit_invoice_screen.dart';
@@ -393,54 +394,81 @@ class _DelegateInvoicesViewState extends ConsumerState<_DelegateInvoicesView> {
               ),
             ),
             Expanded(
-              child: invoicesAsync.when(
-                loading: () =>
-                    const Center(child: CircularProgressIndicator()),
-                error: (err, _) => EmptyStateWidget(
-                  icon: Icons.error_outline,
-                  message: '$err',
-                ),
-                data: (rawList) {
-                  var invoices = rawList;
-                  if (_statusFilter == 'paid') {
-                    invoices = invoices.where((i) => i.isPaid).toList();
-                  } else if (_statusFilter == 'unpaid') {
-                    invoices = invoices.where((i) => !i.isPaid).toList();
-                  }
-
-                  if (invoices.isEmpty) {
-                    return EmptyStateWidget(
-                      icon: Icons.receipt_long_outlined,
-                      message: l10n.tr('no_data'),
-                    );
-                  }
-
-                  return SingleChildScrollView(
-                    padding: ResponsiveBreakpoints.pagePadding(
-                      context,
-                      withFab: true,
-                    ),
-                    child: ResponsiveCardGrid(
-                      maxColumns: 2,
-                      twoColumnsBreakpoint: 720,
-                      children: invoices
-                          .map(
-                            (inv) => InvoiceCard(
-                              invoice: inv,
-                              user: widget.user,
-                              onTap: () => showInvoiceDetailsSheet(
-                                context,
-                                ref,
-                                inv,
-                                widget.user,
-                              ),
+              child: (invoicesAsync.isLoading && !invoicesAsync.hasValue)
+                  ? const Center(child: CircularProgressIndicator())
+                  : (invoicesAsync.hasError && !invoicesAsync.hasValue)
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.error_outline_rounded,
+                                  size: 48,
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  '${invoicesAsync.error}',
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 12),
+                                FilledButton.icon(
+                                  onPressed: () =>
+                                      ref.invalidate(invoicesProvider),
+                                  icon: const Icon(Icons.refresh_rounded),
+                                  label: Text(
+                                    l10n.isAr ? 'إعادة المحاولة' : 'Retry',
+                                  ),
+                                ),
+                              ],
                             ),
-                          )
-                          .toList(),
-                    ),
-                  );
-                },
-              ),
+                          ),
+                        )
+                      : () {
+                          var invoices =
+                              invoicesAsync.value ?? const <InvoiceModel>[];
+                          if (_statusFilter == 'paid') {
+                            invoices =
+                                invoices.where((i) => i.isPaid).toList();
+                          } else if (_statusFilter == 'unpaid') {
+                            invoices =
+                                invoices.where((i) => !i.isPaid).toList();
+                          }
+
+                          if (invoices.isEmpty) {
+                            return EmptyStateWidget(
+                              icon: Icons.receipt_long_outlined,
+                              message: l10n.tr('no_data'),
+                            );
+                          }
+
+                          return SingleChildScrollView(
+                            padding: ResponsiveBreakpoints.pagePadding(
+                              context,
+                              withFab: true,
+                            ),
+                            child: ResponsiveCardGrid(
+                              maxColumns: 2,
+                              twoColumnsBreakpoint: 720,
+                              children: invoices
+                                  .map(
+                                    (inv) => InvoiceCard(
+                                      invoice: inv,
+                                      user: widget.user,
+                                      onTap: () => showInvoiceDetailsSheet(
+                                        context,
+                                        ref,
+                                        inv,
+                                        widget.user,
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                          );
+                        }(),
             ),
           ],
         ),

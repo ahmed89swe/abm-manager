@@ -265,7 +265,14 @@ service cloud.firestore {
               request.resource.data.amount is number &&
               request.resource.data.amount > 0 &&
               request.resource.data.diff(resource.data).affectedKeys()
-                .hasOnly(['monthKey', 'amount', 'notes', 'editedByUid', 'editedByName', 'updatedAt'])) ||
+                .hasOnly(['monthKey', 'governorateId', 'governorateName', 'amount', 'notes', 'editedByUid', 'editedByName', 'updatedAt'])) ||
+            (resource.data.type == 'governorate_topup' &&
+              request.resource.data.type == 'governorate_topup' &&
+              request.resource.data.managerId == currentManagerId() &&
+              request.resource.data.amount is number &&
+              request.resource.data.amount > 0 &&
+              request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['monthKey', 'governorateId', 'governorateName', 'amount', 'notes', 'editedByUid', 'editedByName', 'updatedAt'])) ||
             (resource.data.type == 'personal_expense' &&
               request.resource.data.type == 'personal_expense' &&
               request.resource.data.managerId == currentManagerId() &&
@@ -277,7 +284,14 @@ service cloud.firestore {
       allow delete: if isLegacyMigrationActive() ||
         (isManager() &&
           resource.data.managerId == currentManagerId() &&
-          resource.data.type == 'personal_expense');
+          resource.data.type in [
+            'personal_expense',
+            'company_topup',
+            'governorate_topup',
+            'delegate_virtual_topup',
+            'invoice_payment',
+            'invoice_edit_adjustment'
+          ]);
     }
 
     // الفواتير (معزولة بالكامل لكل مدير وفريقه)
@@ -290,7 +304,7 @@ service cloud.firestore {
             resource.data.managerId == currentManagerId() &&
             (resource.data.createdByUid == request.auth.uid ||
               (resource.data.governorateId == currentUserDoc().data.governorateId &&
-                (resource.data.assignmentType == 'all_gov_delegates' ||
+                (resource.data.assignmentType in ['all_governorate_delegates', 'all_gov_delegates'] ||
                   resource.data.assignedDelegateId == request.auth.uid))))));
 
       allow list: if isLegacyMigrationActive() ||
@@ -299,7 +313,7 @@ service cloud.firestore {
           resource.data.managerId == currentManagerId() &&
           (resource.data.createdByUid == request.auth.uid ||
             (resource.data.governorateId == currentUserDoc().data.governorateId &&
-              (resource.data.assignmentType == 'all_gov_delegates' ||
+              (resource.data.assignmentType in ['all_governorate_delegates', 'all_gov_delegates'] ||
                 resource.data.assignedDelegateId == request.auth.uid))));
 
       allow create: if isActiveUser() &&
@@ -321,7 +335,7 @@ service cloud.firestore {
           request.resource.data.paidFromSource == 'delegate_box' &&
           (resource.data.createdByUid == request.auth.uid ||
             (resource.data.governorateId == currentUserDoc().data.governorateId &&
-              (resource.data.assignmentType == 'all_gov_delegates' ||
+              (resource.data.assignmentType in ['all_governorate_delegates', 'all_gov_delegates'] ||
                 resource.data.assignedDelegateId == request.auth.uid))) &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'items', 'totalAmount', 'isPricePending', 'status',
@@ -330,7 +344,8 @@ service cloud.firestore {
             'receiptImageUrl', 'updatedAt'
           ]));
 
-      allow delete: if false;
+      allow delete: if isLegacyMigrationActive() ||
+        (isManager() && resource.data.managerId == currentManagerId());
     }
 
     // المصاريف الشخصية (معزولة لكل مدير وفريقه)
@@ -420,7 +435,8 @@ service cloud.firestore {
           request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['readByUids']) &&
           request.resource.data.readByUids.hasAll(resource.data.readByUids));
-      allow delete: if false;
+      allow delete: if isLegacyMigrationActive() ||
+        (isManager() && resource.data.managerId == currentManagerId());
     }
   }
 }

@@ -287,37 +287,54 @@ void showInvoiceDetailsSheet(
           ),
         ],
         const SizedBox(height: 18),
-        Row(
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
           children: [
             if (!invoice.isPaid)
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _openPayInvoiceDialog(context, ref, invoice, user);
-                  },
-                  icon: const Icon(Icons.payments_outlined),
-                  label: Text(l10n.tr('pay_invoice')),
-                ),
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _openPayInvoiceDialog(context, ref, invoice, user);
+                },
+                icon: const Icon(Icons.payments_outlined),
+                label: Text(l10n.tr('pay_invoice')),
               ),
-            if (!invoice.isPaid && user.isManager) const SizedBox(width: 10),
-            if (user.isManager)
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            CreateEditInvoiceScreen(existingInvoice: invoice),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.edit_outlined),
-                  label: Text(l10n.tr('edit_invoice')),
-                ),
+            if (user.isManager) ...[
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          CreateEditInvoiceScreen(existingInvoice: invoice),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.edit_outlined),
+                label: Text(l10n.tr('edit_invoice')),
               ),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.dangerColor,
+                  side: const BorderSide(color: AppTheme.dangerColor),
+                ),
+                onPressed: () async {
+                  final deleted = await confirmAndDeleteInvoice(
+                    ctx,
+                    ref,
+                    invoice,
+                    user,
+                  );
+                  if (deleted && ctx.mounted) {
+                    Navigator.pop(ctx);
+                  }
+                },
+                icon: const Icon(Icons.delete_outline_rounded),
+                label: Text(l10n.tr('delete_invoice')),
+              ),
+            ],
           ],
         ),
       ],
@@ -394,6 +411,10 @@ void _openPayInvoiceDialog(
   PickedImageData? receiptImage;
   bool busy = false;
 
+  final String delegateDeductMonth = invoice.invoiceMonthKey.isNotEmpty
+      ? invoice.invoiceMonthKey
+      : ServerTimeService.toMonthKey(invoice.invoiceDate);
+
   showDialog(
     context: context,
     builder: (ctx) => StatefulBuilder(
@@ -463,6 +484,38 @@ void _openPayInvoiceDialog(
                       onChanged: (v) {
                         if (v != null) setState(() => selectedMonthKey = v);
                       },
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Theme.of(ctx)
+                            .colorScheme
+                            .primary
+                            .withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.account_balance_wallet_outlined,
+                            size: 18,
+                            color: Theme.of(ctx).colorScheme.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '${l10n.tr('delegate_pay_box_hint')}: ${invoice.governorateName} • ${AppFormatters.formatMonthLabel(delegateDeductMonth, isAr: l10n.isAr)}',
+                              style: Theme.of(ctx)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                   const SizedBox(height: 12),
@@ -603,5 +656,55 @@ class _DetailRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// نافذة تأكيد حذف الفاتورة وإرجاع تبعاتها المالية (مشتركة بين ورقة التفاصيل وشاشة التعديل)
+Future<bool> confirmAndDeleteInvoice(
+  BuildContext context,
+  WidgetRef ref,
+  InvoiceModel invoice,
+  AppUser user,
+) async {
+  if (!user.isManager) return false;
+  final l10n = AppLocalizations.of(context);
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dCtx) => AlertDialog(
+      title: Text('${l10n.tr('delete_invoice')} • ${invoice.invoiceNumber}'),
+      content: Text(
+        invoice.isPaid
+            ? '${l10n.tr('delete_invoice_confirm')}\n\n${l10n.tr('amount')}: ${AppFormatters.formatMoney(invoice.totalAmount, currency: l10n.tr('currency'))}\n${l10n.tr('governorate')}: ${invoice.governorateName} (${invoice.effectiveMonthKey})'
+            : l10n.tr('delete_invoice_confirm'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dCtx, false),
+          child: Text(l10n.tr('cancel')),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: AppTheme.dangerColor,
+          ),
+          onPressed: () => Navigator.pop(dCtx, true),
+          child: Text(l10n.tr('delete')),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return false;
+  try {
+    await ref.read(invoicesRepositoryProvider).deleteInvoice(
+          manager: user,
+          invoice: invoice,
+        );
+    messenger?.showSnackBar(
+      SnackBar(content: Text(l10n.tr('invoice_deleted'))),
+    );
+    return true;
+  } catch (e) {
+    messenger?.showSnackBar(SnackBar(content: Text('$e')));
+    return false;
   }
 }

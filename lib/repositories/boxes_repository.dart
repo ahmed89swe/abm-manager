@@ -141,11 +141,13 @@ class BoxesRepository {
             .toList());
   }
 
-  /// تعبئة صندوق شهري من الشركة (للمدير فقط - يدعم تعبئة أي شهر حالي أو سابق)
+  /// تعبئة صندوق شهري من الشركة (مع ربط اختياري/أساسي بالمحافظة والشهر لدعم الصناديق الفرعية)
   Future<void> topUpMonthlyBoxFromCompany({
     required AppUser manager,
     required String monthKey,
     required double amount,
+    String? governorateId,
+    String? governorateName,
     String? notes,
   }) async {
     if (amount <= 0) {
@@ -156,10 +158,21 @@ class BoxesRepository {
     final boxRef = _firestore
         .collection('manager_monthly_boxes')
         .doc(MonthlyBox.docId(managerId, monthKey));
+    final hasGov = governorateId != null && governorateId.isNotEmpty;
+    final cleanGovName =
+        hasGov ? ((governorateName ?? '').trim()) : null;
+    final govBoxRef = hasGov
+        ? _firestore.collection('governorate_monthly_boxes').doc(
+              GovernorateMonthlyBox.docId(managerId, governorateId, monthKey),
+            )
+        : null;
     final txRef = _firestore.collection('box_transactions').doc();
 
     await _firestore.runTransaction((tx) async {
+      // القراءات أولاً
       final boxSnap = await tx.get(boxRef);
+      final govBoxSnap = govBoxRef != null ? await tx.get(govBoxRef) : null;
+
       if (!boxSnap.exists) {
         tx.set(boxRef, {
           'managerId': managerId,
@@ -183,11 +196,46 @@ class BoxesRepository {
         });
       }
 
+      if (govBoxRef != null && govBoxSnap != null) {
+        if (!govBoxSnap.exists) {
+          tx.set(govBoxRef, {
+            'managerId': managerId,
+            'governorateId': governorateId,
+            'governorateName': cleanGovName ?? '',
+            'monthKey': monthKey,
+            'year': parsed.year,
+            'month': parsed.month,
+            'totalTopUps': amount,
+            'totalInvoiceDeductions': 0.0,
+            'totalExpenseDeductions': 0.0,
+            'currentBalance': amount,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        } else {
+          final gData = govBoxSnap.data()!;
+          final prevTopUp = ((gData['totalTopUps'] ?? 0) as num).toDouble();
+          final prevBalance =
+              ((gData['currentBalance'] ?? 0) as num).toDouble();
+          tx.update(govBoxRef, {
+            if (cleanGovName != null && cleanGovName.isNotEmpty)
+              'governorateName': cleanGovName,
+            'totalTopUps': prevTopUp + amount,
+            'currentBalance': prevBalance + amount,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+      }
+
       tx.set(txRef, {
         'managerId': managerId,
         'type': BoxTransactionType.companyTopUp.firestoreValue,
         'monthKey': monthKey,
         'amount': amount,
+        'governorateId': hasGov ? governorateId : null,
+        'governorateName':
+            hasGov && cleanGovName != null && cleanGovName.isNotEmpty
+                ? cleanGovName
+                : null,
         'performedByUid': manager.uid,
         'performedByName': manager.name,
         'performedByRole': manager.role.value,
@@ -196,21 +244,37 @@ class BoxesRepository {
       });
     });
 
+    final govDescAr = (hasGov && cleanGovName != null && cleanGovName.isNotEmpty)
+        ? ' - محافظة $cleanGovName'
+        : '';
+    final govDescEn = (hasGov && cleanGovName != null && cleanGovName.isNotEmpty)
+        ? ' ($cleanGovName)'
+        : '';
+
     await AuditHelper.recordLog(
       firestore: _firestore,
       actor: manager,
       actionType: 'company_topup',
-      descriptionAr: 'تعبئة صندوق شهر $monthKey من الشركة بمبلغ $amount',
-      descriptionEn: 'Company top-up for Month $monthKey: $amount',
-      metadata: {'monthKey': monthKey, 'amount': amount, 'notes': notes},
+      descriptionAr:
+          'تعبئة صندوق شهر $monthKey$govDescAr من الشركة بمبلغ $amount',
+      descriptionEn:
+          'Company top-up for Month $monthKey$govDescEn: $amount',
+      metadata: {
+        'monthKey': monthKey,
+        if (hasGov) 'governorateId': governorateId,
+        if (cleanGovName != null && cleanGovName.isNotEmpty)
+          'governorateName': cleanGovName,
+        'amount': amount,
+        'notes': notes,
+      },
     );
 
     await NotificationService.instance.sendCloudNotification(
       managerId: managerId,
       titleAr: 'تعبئة صندوق شهري',
       titleEn: 'Monthly Box Topped Up',
-      bodyAr: 'تمت تعبئة صندوق شهر $monthKey بمبلغ $amount',
-      bodyEn: 'Month $monthKey box topped up with $amount',
+      bodyAr: 'تمت تعبئة صندوق شهر $monthKey$govDescAr بمبلغ $amount',
+      bodyEn: 'Month $monthKey$govDescEn box topped up with $amount',
       type: 'company_topup',
       targetRole: 'manager',
       audienceTags: ['MANAGER_$managerId'],
@@ -219,12 +283,14 @@ class BoxesRepository {
     );
   }
 
-  /// تعديل عملية تعبئة من الشركة (تعديل المبلغ و/أو الشهر و/أو الملاحظات)
+  /// تعديل عملية تعبئة من الشركة (تعديل المبلغ و/أو الشهر و/أو المحافظة و/أو الملاحظات)
   Future<void> editCompanyTopUp({
     required AppUser manager,
     required BoxTransaction oldTx,
     required String newMonthKey,
     required double newAmount,
+    String? newGovernorateId,
+    String? newGovernorateName,
     String? notes,
   }) async {
     if (!manager.isManager) {
@@ -241,6 +307,7 @@ class BoxesRepository {
     final txRef = _firestore.collection('box_transactions').doc(oldTx.id);
     String actualOldMonthKey = oldTx.monthKey;
     double actualOldAmount = oldTx.amount;
+    String? actualOldGovId = oldTx.governorateId;
 
     await _firestore.runTransaction((tx) async {
       final txSnap = await tx.get(txRef);
@@ -254,80 +321,147 @@ class BoxesRepository {
       actualOldMonthKey = (txData['monthKey'] as String?) ?? oldTx.monthKey;
       actualOldAmount =
           ((txData['amount'] ?? oldTx.amount) as num).toDouble();
+      actualOldGovId = txData['governorateId'] as String?;
+      final actualOldGovName = txData['governorateName'] as String?;
 
-      final newParsed = ServerTimeService.parseMonthKey(newMonthKey);
-      final newBoxRef = _firestore
-          .collection('manager_monthly_boxes')
-          .doc(MonthlyBox.docId(managerId, newMonthKey));
+      final String? cleanNewGovId =
+          (newGovernorateId != null && newGovernorateId.isNotEmpty)
+              ? newGovernorateId
+              : null;
+      final String? cleanNewGovName = (cleanNewGovId != null &&
+              newGovernorateName != null &&
+              newGovernorateName.trim().isNotEmpty)
+          ? newGovernorateName.trim()
+          : null;
 
-      if (actualOldMonthKey == newMonthKey) {
-        final delta = newAmount - actualOldAmount;
-        final newBoxSnap = await tx.get(newBoxRef);
-        if (!newBoxSnap.exists) {
-          tx.set(newBoxRef, {
-            'managerId': managerId,
-            'monthKey': newMonthKey,
-            'year': newParsed.year,
-            'month': newParsed.month,
-            'totalCompanyTopUps': newAmount,
-            'totalInvoiceDeductions': 0.0,
-            'totalExpenseDeductions': 0.0,
-            'currentBalance': newAmount,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-        } else {
-          final bData = newBoxSnap.data()!;
-          final prevTopUp =
-              ((bData['totalCompanyTopUps'] ?? 0) as num).toDouble();
-          final prevBalance =
-              ((bData['currentBalance'] ?? 0) as num).toDouble();
-          tx.update(newBoxRef, {
-            'totalCompanyTopUps': prevTopUp + delta,
-            'currentBalance': prevBalance + delta,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-        }
-      } else {
-        final oldBoxRef = _firestore
+      // تجميع صافي الفروق لكل صندوق شهر عام وكل صندوق محافظة
+      final Map<String, double> monthDeltas = {};
+      if (actualOldMonthKey.isNotEmpty) {
+        monthDeltas[actualOldMonthKey] =
+            (monthDeltas[actualOldMonthKey] ?? 0.0) - actualOldAmount;
+      }
+      monthDeltas[newMonthKey] =
+          (monthDeltas[newMonthKey] ?? 0.0) + newAmount;
+
+      final Map<String, ({String govId, String govName, String monthKey, double delta})>
+          govDeltas = {};
+      if (actualOldGovId != null &&
+          actualOldGovId!.isNotEmpty &&
+          actualOldMonthKey.isNotEmpty) {
+        final oldGDocId = GovernorateMonthlyBox.docId(
+          managerId,
+          actualOldGovId!,
+          actualOldMonthKey,
+        );
+        govDeltas[oldGDocId] = (
+          govId: actualOldGovId!,
+          govName: actualOldGovName ?? '',
+          monthKey: actualOldMonthKey,
+          delta: -actualOldAmount,
+        );
+      }
+      if (cleanNewGovId != null) {
+        final newGDocId = GovernorateMonthlyBox.docId(
+          managerId,
+          cleanNewGovId,
+          newMonthKey,
+        );
+        final prev = govDeltas[newGDocId];
+        govDeltas[newGDocId] = (
+          govId: cleanNewGovId,
+          govName: cleanNewGovName ?? prev?.govName ?? '',
+          monthKey: newMonthKey,
+          delta: (prev?.delta ?? 0.0) + newAmount,
+        );
+      }
+
+      // 1) جميع القراءات أولاً
+      final Map<String, DocumentSnapshot<Map<String, dynamic>>> monthSnaps = {};
+      for (final entry in monthDeltas.entries) {
+        if (entry.value == 0) continue;
+        final ref = _firestore
             .collection('manager_monthly_boxes')
-            .doc(MonthlyBox.docId(managerId, actualOldMonthKey));
-        final oldBoxSnap = await tx.get(oldBoxRef);
-        final newBoxSnap = await tx.get(newBoxRef);
+            .doc(MonthlyBox.docId(managerId, entry.key));
+        monthSnaps[entry.key] = await tx.get(ref);
+      }
 
-        if (oldBoxSnap.exists) {
-          final oldData = oldBoxSnap.data()!;
-          final prevOldTopUp =
-              ((oldData['totalCompanyTopUps'] ?? 0) as num).toDouble();
-          final prevOldBal =
-              ((oldData['currentBalance'] ?? 0) as num).toDouble();
-          tx.update(oldBoxRef, {
-            'totalCompanyTopUps': prevOldTopUp - actualOldAmount,
-            'currentBalance': prevOldBal - actualOldAmount,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-        }
+      final Map<String, DocumentSnapshot<Map<String, dynamic>>> govSnaps = {};
+      for (final entry in govDeltas.entries) {
+        if (entry.value.delta == 0) continue;
+        final ref = _firestore
+            .collection('governorate_monthly_boxes')
+            .doc(entry.key);
+        govSnaps[entry.key] = await tx.get(ref);
+      }
 
-        if (!newBoxSnap.exists) {
-          tx.set(newBoxRef, {
+      // 2) الكتابة بعد انتهاء القراءات
+      for (final entry in monthDeltas.entries) {
+        final delta = entry.value;
+        if (delta == 0) continue;
+        final mKey = entry.key;
+        final ref = _firestore
+            .collection('manager_monthly_boxes')
+            .doc(MonthlyBox.docId(managerId, mKey));
+        final snap = monthSnaps[mKey]!;
+        if (!snap.exists) {
+          final parsed = ServerTimeService.parseMonthKey(mKey);
+          tx.set(ref, {
             'managerId': managerId,
-            'monthKey': newMonthKey,
-            'year': newParsed.year,
-            'month': newParsed.month,
-            'totalCompanyTopUps': newAmount,
+            'monthKey': mKey,
+            'year': parsed.year,
+            'month': parsed.month,
+            'totalCompanyTopUps': delta < 0 ? 0.0 : delta,
             'totalInvoiceDeductions': 0.0,
             'totalExpenseDeductions': 0.0,
-            'currentBalance': newAmount,
+            'currentBalance': delta,
             'updatedAt': FieldValue.serverTimestamp(),
           });
         } else {
-          final newData = newBoxSnap.data()!;
-          final prevNewTopUp =
-              ((newData['totalCompanyTopUps'] ?? 0) as num).toDouble();
-          final prevNewBal =
-              ((newData['currentBalance'] ?? 0) as num).toDouble();
-          tx.update(newBoxRef, {
-            'totalCompanyTopUps': prevNewTopUp + newAmount,
-            'currentBalance': prevNewBal + newAmount,
+          final data = snap.data()!;
+          final prevTopUp =
+              ((data['totalCompanyTopUps'] ?? 0) as num).toDouble();
+          final prevBal = ((data['currentBalance'] ?? 0) as num).toDouble();
+          final nextTopUp =
+              (prevTopUp + delta) < 0 ? 0.0 : (prevTopUp + delta);
+          tx.update(ref, {
+            'totalCompanyTopUps': nextTopUp,
+            'currentBalance': prevBal + delta,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+      }
+
+      for (final entry in govDeltas.entries) {
+        final info = entry.value;
+        if (info.delta == 0) continue;
+        final ref =
+            _firestore.collection('governorate_monthly_boxes').doc(entry.key);
+        final snap = govSnaps[entry.key]!;
+        if (!snap.exists) {
+          final parsed = ServerTimeService.parseMonthKey(info.monthKey);
+          tx.set(ref, {
+            'managerId': managerId,
+            'governorateId': info.govId,
+            'governorateName': info.govName,
+            'monthKey': info.monthKey,
+            'year': parsed.year,
+            'month': parsed.month,
+            'totalTopUps': info.delta < 0 ? 0.0 : info.delta,
+            'totalInvoiceDeductions': 0.0,
+            'totalExpenseDeductions': 0.0,
+            'currentBalance': info.delta,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        } else {
+          final gData = snap.data()!;
+          final prevTopUp = ((gData['totalTopUps'] ?? 0) as num).toDouble();
+          final prevBal = ((gData['currentBalance'] ?? 0) as num).toDouble();
+          final nextTopUp =
+              (prevTopUp + info.delta) < 0 ? 0.0 : (prevTopUp + info.delta);
+          tx.update(ref, {
+            if (info.govName.isNotEmpty) 'governorateName': info.govName,
+            'totalTopUps': nextTopUp,
+            'currentBalance': prevBal + info.delta,
             'updatedAt': FieldValue.serverTimestamp(),
           });
         }
@@ -335,6 +469,8 @@ class BoxesRepository {
 
       tx.update(txRef, {
         'monthKey': newMonthKey,
+        'governorateId': cleanNewGovId,
+        'governorateName': cleanNewGovName,
         'amount': newAmount,
         'notes': (notes != null && notes.trim().isNotEmpty) ? notes.trim() : null,
         'editedByUid': manager.uid,
@@ -355,6 +491,8 @@ class BoxesRepository {
         'transactionId': oldTx.id,
         'oldMonthKey': actualOldMonthKey,
         'newMonthKey': newMonthKey,
+        'oldGovernorateId': actualOldGovId,
+        'newGovernorateId': newGovernorateId,
         'oldAmount': actualOldAmount,
         'newAmount': newAmount,
       },
@@ -543,6 +681,149 @@ class BoxesRepository {
       targetUserIds: [delegate.uid],
       referenceId: delegate.uid,
       createdByUid: manager.uid,
+    );
+  }
+
+  /// حذف عملية تعبئة (من الشركة / لمحافظة / لمندوب) وعكس أثرها المالي بدقة ذرية
+  Future<void> deleteTopUpTransaction({
+    required AppUser manager,
+    required BoxTransaction txDoc,
+  }) async {
+    if (!manager.isManager) {
+      throw StateError('حذف عمليات التعبئة متاح للمدير فقط');
+    }
+    final managerId = manager.effectiveManagerId;
+    final txRef = _firestore.collection('box_transactions').doc(txDoc.id);
+
+    double deletedAmount = txDoc.amount;
+    String deletedMonthKey = txDoc.monthKey;
+    String? deletedGovName = txDoc.governorateName;
+    String? deletedDelegateName = txDoc.delegateName;
+    BoxTransactionType deletedType = txDoc.type;
+
+    await _firestore.runTransaction((tx) async {
+      // 1) جميع القراءات أولاً
+      final txSnap = await tx.get(txRef);
+      if (!txSnap.exists || txSnap.data() == null) {
+        throw StateError('عملية التعبئة غير موجودة أو تم حذفها مسبقاً');
+      }
+      final data = txSnap.data()!;
+      deletedType = BoxTransactionType.fromString(data['type'] as String?);
+      if (deletedType != BoxTransactionType.companyTopUp &&
+          deletedType != BoxTransactionType.governorateTopUp &&
+          deletedType != BoxTransactionType.delegateVirtualTopUp) {
+        throw StateError('هذه الحركة ليست عملية تعبئة قابلة للحذف من هنا');
+      }
+
+      deletedAmount = ((data['amount'] ?? txDoc.amount) as num).toDouble();
+      deletedMonthKey = (data['monthKey'] as String?) ?? txDoc.monthKey;
+      final govId = (data['governorateId'] as String?) ?? '';
+      deletedGovName = data['governorateName'] as String?;
+      final delegateId = (data['delegateId'] as String?) ?? '';
+      deletedDelegateName = data['delegateName'] as String?;
+
+      DocumentReference<Map<String, dynamic>>? monthBoxRef;
+      DocumentSnapshot<Map<String, dynamic>>? monthBoxSnap;
+      DocumentReference<Map<String, dynamic>>? govBoxRef;
+      DocumentSnapshot<Map<String, dynamic>>? govBoxSnap;
+      DocumentReference<Map<String, dynamic>>? delegateRef;
+      DocumentSnapshot<Map<String, dynamic>>? delegateSnap;
+
+      if (deletedType == BoxTransactionType.companyTopUp &&
+          deletedMonthKey.isNotEmpty) {
+        monthBoxRef = _firestore
+            .collection('manager_monthly_boxes')
+            .doc(MonthlyBox.docId(managerId, deletedMonthKey));
+        monthBoxSnap = await tx.get(monthBoxRef);
+      }
+
+      if ((deletedType == BoxTransactionType.companyTopUp ||
+              deletedType == BoxTransactionType.governorateTopUp) &&
+          govId.isNotEmpty &&
+          deletedMonthKey.isNotEmpty) {
+        govBoxRef = _firestore.collection('governorate_monthly_boxes').doc(
+              GovernorateMonthlyBox.docId(managerId, govId, deletedMonthKey),
+            );
+        govBoxSnap = await tx.get(govBoxRef);
+      }
+
+      if (deletedType == BoxTransactionType.delegateVirtualTopUp &&
+          delegateId.isNotEmpty) {
+        delegateRef = _firestore.collection('users').doc(delegateId);
+        delegateSnap = await tx.get(delegateRef);
+      }
+
+      // 2) الكتابة بعد انتهاء القراءات
+      if (monthBoxRef != null &&
+          monthBoxSnap != null &&
+          monthBoxSnap.exists &&
+          monthBoxSnap.data() != null) {
+        final mData = monthBoxSnap.data()!;
+        final prevTopUp =
+            ((mData['totalCompanyTopUps'] ?? 0) as num).toDouble();
+        final prevBal = ((mData['currentBalance'] ?? 0) as num).toDouble();
+        final nextTopUp =
+            (prevTopUp - deletedAmount) < 0 ? 0.0 : (prevTopUp - deletedAmount);
+        tx.update(monthBoxRef, {
+          'totalCompanyTopUps': nextTopUp,
+          'currentBalance': prevBal - deletedAmount,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      if (govBoxRef != null &&
+          govBoxSnap != null &&
+          govBoxSnap.exists &&
+          govBoxSnap.data() != null) {
+        final gData = govBoxSnap.data()!;
+        final prevTopUp = ((gData['totalTopUps'] ?? 0) as num).toDouble();
+        final prevBal = ((gData['currentBalance'] ?? 0) as num).toDouble();
+        final nextTopUp =
+            (prevTopUp - deletedAmount) < 0 ? 0.0 : (prevTopUp - deletedAmount);
+        tx.update(govBoxRef, {
+          'totalTopUps': nextTopUp,
+          'currentBalance': prevBal - deletedAmount,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      if (delegateRef != null &&
+          delegateSnap != null &&
+          delegateSnap.exists &&
+          delegateSnap.data() != null) {
+        final prevVirtual =
+            ((delegateSnap.data()!['virtualBoxBalance'] ?? 0) as num)
+                .toDouble();
+        tx.update(delegateRef, {
+          'virtualBoxBalance': prevVirtual - deletedAmount,
+        });
+      }
+
+      tx.delete(txRef);
+    });
+
+    final targetLabel = (deletedGovName != null && deletedGovName!.isNotEmpty)
+        ? ' ($deletedGovName)'
+        : (deletedDelegateName != null && deletedDelegateName!.isNotEmpty
+            ? ' ($deletedDelegateName)'
+            : '');
+
+    await AuditHelper.recordLog(
+      firestore: _firestore,
+      actor: manager,
+      actionType: 'delete_topup',
+      descriptionAr:
+          'حذف المدير عملية التعبئة$targetLabel لشهر $deletedMonthKey بمبلغ $deletedAmount وعكس أثرها المالي',
+      descriptionEn:
+          'Manager deleted top-up$targetLabel ($deletedMonthKey: $deletedAmount) and reversed box balances',
+      metadata: {
+        'transactionId': txDoc.id,
+        'type': deletedType.firestoreValue,
+        'monthKey': deletedMonthKey,
+        'amount': deletedAmount,
+        'governorateName': deletedGovName,
+        'delegateName': deletedDelegateName,
+      },
     );
   }
 }

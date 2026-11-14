@@ -230,5 +230,57 @@ void main() {
       expect(parsedEdited.isEdited, isTrue);
       expect(parsedEdited.governorateName, 'بغداد');
     });
+
+    test('GovernorateMonthlyBox builds composite docId and calculates deductions', () {
+      expect(
+        GovernorateMonthlyBox.docId('m1', 'gov_baghdad', '2026-11'),
+        'm1_gov_baghdad_2026-11',
+      );
+      expect(
+        GovernorateMonthlyBox.legacyDocId('gov_baghdad', '2026-11'),
+        'gov_baghdad_2026-11',
+      );
+
+      final emptyGovBox = GovernorateMonthlyBox.empty(
+        managerId: 'm1',
+        governorateId: 'gov_baghdad',
+        governorateName: 'بغداد',
+        monthKey: '2026-06',
+      );
+      expect(emptyGovBox.id, 'm1_gov_baghdad_2026-06');
+      expect(emptyGovBox.year, 2026);
+      expect(emptyGovBox.month, 6);
+      expect(emptyGovBox.totalDeductions, 0);
+
+      final parsedGovBox = GovernorateMonthlyBox.fromMap({
+        'managerId': 'm1',
+        'governorateId': 'gov_baghdad',
+        'governorateName': 'بغداد',
+        'monthKey': '2026-11',
+        'year': 2026,
+        'month': 11,
+        'totalTopUps': 1000000,
+        'totalInvoiceDeductions': 250000,
+        'totalExpenseDeductions': 100000,
+        'currentBalance': 650000,
+      }, 'm1_gov_baghdad_2026-11');
+      expect(parsedGovBox.totalDeductions, 350000);
+      expect(parsedGovBox.currentBalance, 650000);
+    });
+
+    test('MonthlyBox resolves monthKey fallback from scoped docId cleanly', () {
+      expect(MonthlyBox.docId('m1', '2026-11'), 'm1_2026-11');
+      final parsed = MonthlyBox.fromMap({
+        'managerId': 'm1',
+        'year': 2026,
+        'month': 11,
+        'totalCompanyTopUps': 500000,
+        'totalInvoiceDeductions': 125000,
+        'totalExpenseDeductions': 25000,
+        'currentBalance': 350000,
+      }, 'm1_2026-11');
+      expect(parsed.monthKey, '2026-11');
+      expect(parsed.totalDeductions, 150000);
+    });
   });
 }

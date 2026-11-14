@@ -36,10 +36,16 @@ class InvoicesRepository {
     late final StreamController<List<InvoiceModel>> controller;
     final List<StreamSubscription<QuerySnapshot<Map<String, dynamic>>>> subs =
         [];
-    final Map<int, List<InvoiceModel>> buckets = {0: [], 1: [], 2: []};
+    final Map<int, List<InvoiceModel>> buckets = {};
+    final Set<int> failedBuckets = {};
+    bool hasEmitted = false;
+    final govId = user.governorateId;
+    final hasGov = govId != null && govId.isNotEmpty;
+    final int expectedBuckets = hasGov ? 3 : 1;
 
     void emitMerged() {
       if (controller.isClosed) return;
+      hasEmitted = true;
       final byId = <String, InvoiceModel>{};
       for (final list in buckets.values) {
         for (final inv in list) {
@@ -51,10 +57,22 @@ class InvoicesRepository {
       controller.add(merged);
     }
 
+    void handleBucketError(int idx, Object err, StackTrace st) {
+      failedBuckets.add(idx);
+      if (controller.isClosed) return;
+      if (!hasEmitted &&
+          (buckets.length + failedBuckets.length) >= expectedBuckets) {
+        if (buckets.isNotEmpty) {
+          emitMerged();
+        } else {
+          controller.addError(err, st);
+        }
+      }
+    }
+
     controller = StreamController<List<InvoiceModel>>(
       onListen: () {
-        final govId = user.governorateId;
-        if (govId != null && govId.isNotEmpty) {
+        if (hasGov) {
           subs.add(
             _firestore
                 .collection('invoices')
@@ -73,7 +91,8 @@ class InvoicesRepository {
                         .toList();
                     emitMerged();
                   },
-                  onError: controller.addError,
+                  onError: (Object e, StackTrace st) =>
+                      handleBucketError(0, e, st),
                 ),
           );
 
@@ -91,7 +110,8 @@ class InvoicesRepository {
                         .toList();
                     emitMerged();
                   },
-                  onError: controller.addError,
+                  onError: (Object e, StackTrace st) =>
+                      handleBucketError(1, e, st),
                 ),
           );
         }
@@ -109,7 +129,8 @@ class InvoicesRepository {
                       .toList();
                   emitMerged();
                 },
-                onError: controller.addError,
+                onError: (Object e, StackTrace st) =>
+                    handleBucketError(2, e, st),
               ),
         );
       },
@@ -522,10 +543,23 @@ class InvoicesRepository {
     }
 
     final trustedNow = await ServerTimeService.instance.getTrustedNow();
+    final fallbackMonth = invoice.invoiceMonthKey.isNotEmpty
+        ? invoice.invoiceMonthKey
+        : ServerTimeService.toMonthKey(invoice.invoiceDate);
     final deductMonthKey = actor.isManager
-        ? (managerSelectedDeductMonthKey ?? invoice.invoiceMonthKey)
-        : invoice.invoiceMonthKey;
+        ? (managerSelectedDeductMonthKey ?? fallbackMonth)
+        : fallbackMonth;
     final parsedMonth = ServerTimeService.parseMonthKey(deductMonthKey);
+
+    final effectiveGovId =
+        (actor.isDelegate && (actor.governorateId ?? '').isNotEmpty)
+            ? actor.governorateId!
+            : invoice.governorateId;
+    final effectiveGovName = (actor.isDelegate &&
+            (actor.governorateName ?? '').isNotEmpty &&
+            effectiveGovId == actor.governorateId)
+        ? actor.governorateName!
+        : invoice.governorateName;
 
     String? receiptUrl = invoice.receiptImageUrl;
     if (receiptImage != null) {
@@ -546,7 +580,7 @@ class InvoicesRepository {
     final govBoxRef = _firestore.collection('governorate_monthly_boxes').doc(
           GovernorateMonthlyBox.docId(
             managerId,
-            invoice.governorateId,
+            effectiveGovId,
             deductMonthKey,
           ),
         );
@@ -600,8 +634,8 @@ class InvoicesRepository {
         if (govBoxSnap == null || !govBoxSnap.exists) {
           tx.set(govBoxRef, {
             'managerId': managerId,
-            'governorateId': invoice.governorateId,
-            'governorateName': invoice.governorateName,
+            'governorateId': effectiveGovId,
+            'governorateName': effectiveGovName,
             'monthKey': deductMonthKey,
             'year': parsedMonth.year,
             'month': parsedMonth.month,
@@ -617,7 +651,7 @@ class InvoicesRepository {
               ((gData['totalInvoiceDeductions'] ?? 0) as num).toDouble();
           final gPrevBal = ((gData['currentBalance'] ?? 0) as num).toDouble();
           tx.update(govBoxRef, {
-            'governorateName': invoice.governorateName,
+            'governorateName': effectiveGovName,
             'totalInvoiceDeductions': gPrevDed + newTotal,
             'currentBalance': gPrevBal - newTotal,
             'updatedAt': FieldValue.serverTimestamp(),
@@ -634,8 +668,8 @@ class InvoicesRepository {
         _applyBlindGovernorateMonthlyDeduction(
           tx: tx,
           managerId: managerId,
-          governorateId: invoice.governorateId,
-          governorateName: invoice.governorateName,
+          governorateId: effectiveGovId,
+          governorateName: effectiveGovName,
           monthKey: deductMonthKey,
           deltaDeduction: newTotal,
           deltaBalance: -newTotal,
@@ -675,8 +709,8 @@ class InvoicesRepository {
         'delegateId': actor.isDelegate ? actor.uid : invoice.assignedDelegateId,
         'delegateName':
             actor.isDelegate ? actor.name : invoice.assignedDelegateName,
-        'governorateId': invoice.governorateId,
-        'governorateName': invoice.governorateName,
+        'governorateId': effectiveGovId,
+        'governorateName': effectiveGovName,
         'performedByUid': actor.uid,
         'performedByName': actor.name,
         'performedByRole': actor.role.value,
@@ -1096,6 +1130,187 @@ class InvoicesRepository {
       audienceTags: audienceTags,
       referenceId: original.id,
       createdByUid: manager.uid,
+    );
+  }
+
+  /// حذف فاتورة وجميع تبعاتها المالية (إرجاع المبلغ للصندوق العام وصندوق المحافظة وصندوق المندوب وحذف الحركات المرتبطة)
+  Future<void> deleteInvoice({
+    required AppUser manager,
+    required InvoiceModel invoice,
+  }) async {
+    if (!manager.isManager) {
+      throw StateError('حذف الفواتير متاح للمدير فقط');
+    }
+    final managerId = manager.effectiveManagerId;
+    final invoiceRef = _firestore.collection('invoices').doc(invoice.id);
+
+    final txSnap = await _firestore
+        .collection('box_transactions')
+        .where('managerId', isEqualTo: managerId)
+        .where('referenceId', isEqualTo: invoice.id)
+        .get();
+
+    bool refundedPaid = false;
+    double refundedAmount = 0.0;
+    String refundMonthKey = '';
+    String refundGovId = invoice.governorateId;
+    String refundInvoiceNumber = invoice.invoiceNumber;
+
+    await _firestore.runTransaction((tx) async {
+      // 1) جميع القراءات أولاً
+      final invSnap = await tx.get(invoiceRef);
+      if (!invSnap.exists || invSnap.data() == null) {
+        throw StateError('الفاتورة غير موجودة أو تم حذفها مسبقاً');
+      }
+      final invData = invSnap.data()!;
+      final wasPaid = (invData['status'] ?? '') == InvoiceStatus.paid.name;
+      final amount = ((invData['totalAmount'] ?? 0) as num).toDouble();
+      refundInvoiceNumber =
+          (invData['invoiceNumber'] as String?) ?? invoice.invoiceNumber;
+      refundGovId =
+          (invData['governorateId'] as String?) ?? invoice.governorateId;
+
+      final rawDeductMonth = invData['deductedManagerMonthKey'] as String?;
+      final rawInvMonth = invData['invoiceMonthKey'] as String?;
+      refundMonthKey = (rawDeductMonth != null && rawDeductMonth.isNotEmpty)
+          ? rawDeductMonth
+          : ((rawInvMonth != null && rawInvMonth.isNotEmpty)
+              ? rawInvMonth
+              : ServerTimeService.toMonthKey(invoice.invoiceDate));
+
+      final paidFromSource = invData['paidFromSource'] as String?;
+      final paidByRole = invData['paidByRole'] as String?;
+      final paidByUid = invData['paidByUid'] as String?;
+      final wasDelegatePaid = (paidFromSource == 'delegate_box' ||
+              paidByRole == 'delegate') &&
+          (paidByUid != null && paidByUid.isNotEmpty);
+
+      DocumentReference<Map<String, dynamic>>? monthBoxRef;
+      DocumentSnapshot<Map<String, dynamic>>? monthBoxSnap;
+      DocumentReference<Map<String, dynamic>>? govBoxRef;
+      DocumentSnapshot<Map<String, dynamic>>? govBoxSnap;
+      DocumentReference<Map<String, dynamic>>? delegateRef;
+      DocumentSnapshot<Map<String, dynamic>>? delegateSnap;
+
+      if (wasPaid && amount > 0) {
+        refundedPaid = true;
+        refundedAmount = amount;
+        if (refundMonthKey.isNotEmpty) {
+          monthBoxRef = _firestore
+              .collection('manager_monthly_boxes')
+              .doc(MonthlyBox.docId(managerId, refundMonthKey));
+          monthBoxSnap = await tx.get(monthBoxRef);
+
+          if (refundGovId.isNotEmpty) {
+            govBoxRef = _firestore
+                .collection('governorate_monthly_boxes')
+                .doc(
+                  GovernorateMonthlyBox.docId(
+                    managerId,
+                    refundGovId,
+                    refundMonthKey,
+                  ),
+                );
+            govBoxSnap = await tx.get(govBoxRef);
+          }
+        }
+        if (wasDelegatePaid) {
+          delegateRef = _firestore.collection('users').doc(paidByUid);
+          delegateSnap = await tx.get(delegateRef);
+        }
+      }
+
+      // 2) الكتابة بعد انتهاء القراءات
+      if (refundedPaid) {
+        if (monthBoxRef != null &&
+            monthBoxSnap != null &&
+            monthBoxSnap.exists &&
+            monthBoxSnap.data() != null) {
+          final mData = monthBoxSnap.data()!;
+          final prevDed =
+              ((mData['totalInvoiceDeductions'] ?? 0) as num).toDouble();
+          final prevBal = ((mData['currentBalance'] ?? 0) as num).toDouble();
+          final nextDed = (prevDed - refundedAmount) < 0
+              ? 0.0
+              : (prevDed - refundedAmount);
+          tx.update(monthBoxRef, {
+            'totalInvoiceDeductions': nextDed,
+            'currentBalance': prevBal + refundedAmount,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        if (govBoxRef != null &&
+            govBoxSnap != null &&
+            govBoxSnap.exists &&
+            govBoxSnap.data() != null) {
+          final gData = govBoxSnap.data()!;
+          final gPrevDed =
+              ((gData['totalInvoiceDeductions'] ?? 0) as num).toDouble();
+          final gPrevBal = ((gData['currentBalance'] ?? 0) as num).toDouble();
+          final gNextDed = (gPrevDed - refundedAmount) < 0
+              ? 0.0
+              : (gPrevDed - refundedAmount);
+          tx.update(govBoxRef, {
+            'totalInvoiceDeductions': gNextDed,
+            'currentBalance': gPrevBal + refundedAmount,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        if (delegateRef != null &&
+            delegateSnap != null &&
+            delegateSnap.exists &&
+            delegateSnap.data() != null) {
+          final prevVirtual =
+              ((delegateSnap.data()!['virtualBoxBalance'] ?? 0) as num)
+                  .toDouble();
+          tx.update(delegateRef, {
+            'virtualBoxBalance': prevVirtual + refundedAmount,
+          });
+        }
+      }
+
+      for (final tDoc in txSnap.docs) {
+        tx.delete(tDoc.reference);
+      }
+      tx.delete(invoiceRef);
+    });
+
+    try {
+      final notifSnap = await _firestore
+          .collection('notifications')
+          .where('managerId', isEqualTo: managerId)
+          .where('referenceId', isEqualTo: invoice.id)
+          .get();
+      if (notifSnap.docs.isNotEmpty) {
+        final batch = _firestore.batch();
+        for (final nDoc in notifSnap.docs) {
+          batch.delete(nDoc.reference);
+        }
+        await batch.commit();
+      }
+    } catch (_) {}
+
+    await AuditHelper.recordLog(
+      firestore: _firestore,
+      actor: manager,
+      actionType: 'delete_invoice',
+      descriptionAr: refundedPaid
+          ? 'حذف المدير الفاتورة $refundInvoiceNumber وتم إرجاع مبلغ $refundedAmount إلى صندوق شهر $refundMonthKey ومحافظة ${invoice.governorateName}'
+          : 'حذف المدير الفاتورة غير المسددة $refundInvoiceNumber',
+      descriptionEn: refundedPaid
+          ? 'Manager deleted invoice $refundInvoiceNumber and refunded $refundedAmount to month $refundMonthKey (${invoice.governorateName})'
+          : 'Manager deleted unpaid invoice $refundInvoiceNumber',
+      metadata: {
+        'invoiceId': invoice.id,
+        'invoiceNumber': refundInvoiceNumber,
+        'wasPaid': refundedPaid,
+        'refundedAmount': refundedAmount,
+        'refundMonthKey': refundMonthKey,
+        'governorateId': refundGovId,
+        'deletedTransactionsCount': txSnap.docs.length,
+      },
     );
   }
 }

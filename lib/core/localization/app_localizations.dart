@@ -188,7 +188,7 @@ class AppLocalizations {
     'loading': 'جاري التحميل...',
     'server_time_badge': 'توقيت السيرفر الموثوق',
     'edit_company_topup': 'تعديل تعبئة من الشركة',
-    'company_topups_history': 'سجل عمليات التعبئة من الشركة',
+    'company_topups_history': 'سجل عمليات التعبئة',
     'edited_label': 'معدّل',
     'setup_new_manager': 'إعداد / تسجيل حساب مدير جديد',
     'browser_notifications': 'إشعارات المتصفح',
@@ -213,6 +213,20 @@ class AppLocalizations {
     'general_expense_no_gov': 'مصروف عام (بدون محافظة)',
     'pending_payment': 'على الانتظار',
     'by_governorates': 'حسب المحافظات',
+    'delete_invoice': 'حذف الفاتورة',
+    'delete_invoice_confirm':
+        'هل أنت متأكد من حذف هذه الفاتورة وجميع تبعاتها؟ سيتم إرجاع المبلغ المسدد تلقائياً إلى الشهر والمحافظة وصندوق المندوب (إن وجد).',
+    'invoice_deleted': 'تم حذف الفاتورة وإرجاع تبعاتها المالية بنجاح',
+    'delete_topup': 'حذف عملية التعبئة',
+    'delete_topup_confirm':
+        'هل أنت متأكد من حذف عملية التعبئة هذه؟ سيتم عكس أثرها المالي من الصناديق المرتبطة تلقائياً.',
+    'topup_deleted': 'تم حذف عملية التعبئة بنجاح',
+    'no_governorate_legacy': 'تعبئة عامة (بدون محافظة)',
+    'also_credit_general_box': 'إضافة المبلغ أيضاً للصندوق الشهري العام',
+    'also_credit_general_box_hint':
+        'فعّل إذا كانت تعبئة جديدة من الشركة؛ عطّله للتخصيص الداخلي فقط',
+    'delegate_pay_box_hint': 'سيتم الخصم من صندوق المحافظة للشهر المقابل',
+    'edit_topup': 'تعديل التعبئة',
   };
 
   static const Map<String, String> _en = {
@@ -360,7 +374,7 @@ class AppLocalizations {
     'loading': 'Loading...',
     'server_time_badge': 'Trusted Server Time',
     'edit_company_topup': 'Edit Company Top-Up',
-    'company_topups_history': 'Company Top-Ups History',
+    'company_topups_history': 'Top-Ups History',
     'edited_label': 'Edited',
     'setup_new_manager': 'Setup / Register New Manager Account',
     'browser_notifications': 'Browser Notifications',
@@ -385,6 +399,20 @@ class AppLocalizations {
     'general_expense_no_gov': 'General Expense (No Governorate)',
     'pending_payment': 'Pending',
     'by_governorates': 'By Governorates',
+    'delete_invoice': 'Delete Invoice',
+    'delete_invoice_confirm':
+        'Delete this invoice and all its side effects? Any paid amount will be automatically refunded to the deducted month, governorate box, and delegate box.',
+    'invoice_deleted': 'Invoice deleted and financial effects reversed',
+    'delete_topup': 'Delete Top-Up',
+    'delete_topup_confirm':
+        'Delete this top-up operation? Its amount will be subtracted back from linked boxes automatically.',
+    'topup_deleted': 'Top-up deleted successfully',
+    'no_governorate_legacy': 'General (No Governorate)',
+    'also_credit_general_box': 'Also credit the general monthly box',
+    'also_credit_general_box_hint':
+        'Keep enabled for new company funding; disable for internal sub-box allocation only',
+    'delegate_pay_box_hint': 'Deducts from your governorate box for this month',
+    'edit_topup': 'Edit Top-Up',
   };
 }
 
