@@ -653,14 +653,18 @@ class BoxesRepository {
       });
     });
 
-    await AuditHelper.recordLog(
-      firestore: _firestore,
-      actor: manager,
+    await _notifyAndLogDelegateBoxChange(
+      manager: manager,
+      delegate: delegate,
       actionType: 'delegate_topup',
       descriptionAr:
           'تعبئة الصندوق الافتراضي للمندوب ${delegate.name} ($monthKey) بمبلغ $amount',
       descriptionEn:
           'Topped up delegate ${delegate.name} virtual box ($monthKey) by $amount',
+      titleAr: 'تمت تعبئة صندوقك',
+      titleEn: 'Your Box Was Topped Up',
+      bodyAr: 'أضاف المدير مبلغ $amount إلى رصيد صندوقك الافتراضي ($monthKey)',
+      bodyEn: 'Manager added $amount to your virtual box balance ($monthKey)',
       metadata: {
         'delegateId': delegate.uid,
         'monthKey': monthKey,
@@ -668,14 +672,268 @@ class BoxesRepository {
         'notes': notes,
       },
     );
+  }
+
+  /// سحب مبلغ من الصندوق الافتراضي للمندوب (يخصم فقط من virtualBoxBalance ولا يمس صندوق الشركة)
+  Future<void> withdrawFromDelegateVirtualBox({
+    required AppUser manager,
+    required AppUser delegate,
+    required double amount,
+    String? monthKeyOverride,
+    String? notes,
+  }) async {
+    if (!manager.isManager) {
+      throw StateError('السحب من صندوق المندوب متاح للمدير فقط');
+    }
+    if (amount <= 0) {
+      throw ArgumentError('يجب أن يكون المبلغ المسحوب أكبر من صفر');
+    }
+    final managerId = manager.effectiveManagerId;
+    final now = await ServerTimeService.instance.getTrustedNow();
+    final monthKey = monthKeyOverride ?? ServerTimeService.toMonthKey(now);
+    final delegateRef = _firestore.collection('users').doc(delegate.uid);
+    final txRef = _firestore.collection('box_transactions').doc();
+
+    await _firestore.runTransaction((tx) async {
+      final delegateSnap = await tx.get(delegateRef);
+      if (!delegateSnap.exists) {
+        throw StateError('حساب المندوب غير موجود');
+      }
+      final prevBalance =
+          ((delegateSnap.data()!['virtualBoxBalance'] ?? 0) as num).toDouble();
+      tx.update(delegateRef, {
+        'virtualBoxBalance': prevBalance - amount,
+      });
+
+      tx.set(txRef, {
+        'managerId': managerId,
+        'type': BoxTransactionType.delegateVirtualWithdraw.firestoreValue,
+        'monthKey': monthKey,
+        'amount': amount,
+        'signedDelta': -amount,
+        'delegateId': delegate.uid,
+        'delegateName': delegate.name,
+        'governorateId': delegate.governorateId,
+        'governorateName': delegate.governorateName,
+        'performedByUid': manager.uid,
+        'performedByName': manager.name,
+        'performedByRole': manager.role.value,
+        'notes': notes,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    });
+
+    await _notifyAndLogDelegateBoxChange(
+      manager: manager,
+      delegate: delegate,
+      actionType: 'delegate_withdraw',
+      descriptionAr:
+          'سحب المدير مبلغ $amount من الصندوق الافتراضي للمندوب ${delegate.name} ($monthKey)',
+      descriptionEn:
+          'Manager withdrew $amount from delegate ${delegate.name} virtual box ($monthKey)',
+      titleAr: 'تم السحب من صندوقك',
+      titleEn: 'Amount Withdrawn From Your Box',
+      bodyAr: 'سحب المدير مبلغ $amount من رصيد صندوقك الافتراضي ($monthKey)',
+      bodyEn:
+          'Manager withdrew $amount from your virtual box balance ($monthKey)',
+      metadata: {
+        'delegateId': delegate.uid,
+        'monthKey': monthKey,
+        'amount': amount,
+        'notes': notes,
+      },
+    );
+  }
+
+  /// تعديل رصيد الصندوق الافتراضي للمندوب مباشرة إلى قيمة جديدة مع تسجيل الفرق في الحركات
+  Future<void> adjustDelegateVirtualBalance({
+    required AppUser manager,
+    required AppUser delegate,
+    required double newBalance,
+    String? monthKeyOverride,
+    String? notes,
+  }) async {
+    if (!manager.isManager) {
+      throw StateError('تعديل رصيد المندوب متاح للمدير فقط');
+    }
+    final managerId = manager.effectiveManagerId;
+    final now = await ServerTimeService.instance.getTrustedNow();
+    final monthKey = monthKeyOverride ?? ServerTimeService.toMonthKey(now);
+    final delegateRef = _firestore.collection('users').doc(delegate.uid);
+    final txRef = _firestore.collection('box_transactions').doc();
+
+    double prevBalance = 0;
+    double delta = 0;
+
+    await _firestore.runTransaction((tx) async {
+      final delegateSnap = await tx.get(delegateRef);
+      if (!delegateSnap.exists) {
+        throw StateError('حساب المندوب غير موجود');
+      }
+      prevBalance =
+          ((delegateSnap.data()!['virtualBoxBalance'] ?? 0) as num).toDouble();
+      delta = newBalance - prevBalance;
+      if (delta.abs() < 0.0001) {
+        throw ArgumentError('الرصيد الجديد مطابق للرصيد الحالي');
+      }
+
+      tx.update(delegateRef, {
+        'virtualBoxBalance': newBalance,
+      });
+
+      tx.set(txRef, {
+        'managerId': managerId,
+        'type': BoxTransactionType.delegateVirtualAdjustment.firestoreValue,
+        'monthKey': monthKey,
+        'amount': delta.abs(),
+        'signedDelta': delta,
+        'delegateId': delegate.uid,
+        'delegateName': delegate.name,
+        'governorateId': delegate.governorateId,
+        'governorateName': delegate.governorateName,
+        'performedByUid': manager.uid,
+        'performedByName': manager.name,
+        'performedByRole': manager.role.value,
+        'notes': notes,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    });
+
+    await _notifyAndLogDelegateBoxChange(
+      manager: manager,
+      delegate: delegate,
+      actionType: 'delegate_balance_adjust',
+      descriptionAr:
+          'عدّل المدير رصيد المندوب ${delegate.name} من $prevBalance إلى $newBalance ($monthKey)',
+      descriptionEn:
+          'Manager adjusted ${delegate.name} balance from $prevBalance to $newBalance ($monthKey)',
+      titleAr: 'تم تعديل رصيد صندوقك',
+      titleEn: 'Your Box Balance Was Updated',
+      bodyAr: 'تم تحديث رصيد صندوقك الافتراضي إلى $newBalance',
+      bodyEn: 'Your virtual box balance was updated to $newBalance',
+      metadata: {
+        'delegateId': delegate.uid,
+        'monthKey': monthKey,
+        'previousBalance': prevBalance,
+        'newBalance': newBalance,
+        'signedDelta': delta,
+        'notes': notes,
+      },
+    );
+  }
+
+  /// تعديل حركة تعبئة أو سحب سابقة على صندوق المندوب وتحديث رصيده بالفرق ذرياً
+  Future<void> editDelegateVirtualTransaction({
+    required AppUser manager,
+    required BoxTransaction oldTx,
+    required String newMonthKey,
+    required double newAmount,
+    String? notes,
+  }) async {
+    if (!manager.isManager) {
+      throw StateError('تعديل حركات صندوق المندوب متاح للمدير فقط');
+    }
+    if (newAmount <= 0) {
+      throw ArgumentError('يجب أن يكون المبلغ أكبر من صفر');
+    }
+    if (oldTx.type != BoxTransactionType.delegateVirtualTopUp &&
+        oldTx.type != BoxTransactionType.delegateVirtualWithdraw) {
+      throw StateError('يمكن تعديل حركات التعبئة أو السحب للمندوب فقط');
+    }
+
+    final txRef = _firestore.collection('box_transactions').doc(oldTx.id);
+    double oldAmount = oldTx.amount;
+    String delegateName = oldTx.delegateName ?? '';
+
+    await _firestore.runTransaction((tx) async {
+      final txSnap = await tx.get(txRef);
+      if (!txSnap.exists || txSnap.data() == null) {
+        throw StateError('الحركة غير موجودة أو تم حذفها مسبقاً');
+      }
+      final data = txSnap.data()!;
+      final parsedType = BoxTransactionType.fromString(data['type'] as String?);
+      oldAmount = ((data['amount'] ?? oldTx.amount) as num).toDouble();
+      final delegateId = (data['delegateId'] ?? oldTx.delegateId ?? '') as String;
+      delegateName = (data['delegateName'] ?? oldTx.delegateName ?? '') as String;
+
+      if (delegateId.isEmpty) {
+        throw StateError('المندوب غير محدد في هذه الحركة');
+      }
+      final delegateRef = _firestore.collection('users').doc(delegateId);
+      final delegateSnap = await tx.get(delegateRef);
+      if (!delegateSnap.exists || delegateSnap.data() == null) {
+        throw StateError('حساب المندوب غير موجود');
+      }
+
+      final prevBalance =
+          ((delegateSnap.data()!['virtualBoxBalance'] ?? 0) as num).toDouble();
+      final isWithdraw = parsedType == BoxTransactionType.delegateVirtualWithdraw;
+      final balanceDelta =
+          isWithdraw ? -(newAmount - oldAmount) : (newAmount - oldAmount);
+
+      tx.update(delegateRef, {
+        'virtualBoxBalance': prevBalance + balanceDelta,
+      });
+
+      tx.update(txRef, {
+        'monthKey': newMonthKey,
+        'amount': newAmount,
+        'signedDelta': isWithdraw ? -newAmount : newAmount,
+        'notes': notes,
+        'editedByUid': manager.uid,
+        'editedByName': manager.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+
+    await AuditHelper.recordLog(
+      firestore: _firestore,
+      actor: manager,
+      actionType: 'edit_delegate_box_tx',
+      descriptionAr:
+          'عدّل المدير حركة صندوق المندوب $delegateName من $oldAmount إلى $newAmount ($newMonthKey)',
+      descriptionEn:
+          'Manager edited delegate $delegateName box transaction from $oldAmount to $newAmount ($newMonthKey)',
+      metadata: {
+        'transactionId': oldTx.id,
+        'type': oldTx.type.firestoreValue,
+        'oldAmount': oldAmount,
+        'newAmount': newAmount,
+        'newMonthKey': newMonthKey,
+        'notes': notes,
+      },
+    );
+  }
+
+  Future<void> _notifyAndLogDelegateBoxChange({
+    required AppUser manager,
+    required AppUser delegate,
+    required String actionType,
+    required String descriptionAr,
+    required String descriptionEn,
+    required String titleAr,
+    required String titleEn,
+    required String bodyAr,
+    required String bodyEn,
+    required Map<String, dynamic> metadata,
+  }) async {
+    final managerId = manager.effectiveManagerId;
+    await AuditHelper.recordLog(
+      firestore: _firestore,
+      actor: manager,
+      actionType: actionType,
+      descriptionAr: descriptionAr,
+      descriptionEn: descriptionEn,
+      metadata: metadata,
+    );
 
     await NotificationService.instance.sendCloudNotification(
       managerId: managerId,
-      titleAr: 'تمت تعبئة صندوقك',
-      titleEn: 'Your Box Was Topped Up',
-      bodyAr: 'أضاف المدير مبلغ $amount إلى رصيد صندوقك الافتراضي ($monthKey)',
-      bodyEn: 'Manager added $amount to your virtual box balance ($monthKey)',
-      type: 'delegate_topup',
+      titleAr: titleAr,
+      titleEn: titleEn,
+      bodyAr: bodyAr,
+      bodyEn: bodyEn,
+      type: actionType,
       targetRole: 'delegate',
       audienceTags: ['MANAGER_$managerId', 'USER_${delegate.uid}'],
       targetUserIds: [delegate.uid],
@@ -684,18 +942,19 @@ class BoxesRepository {
     );
   }
 
-  /// حذف عملية تعبئة (من الشركة / لمحافظة / لمندوب) وعكس أثرها المالي بدقة ذرية
+  /// حذف عملية تعبئة أو سحب/تعديل مندوب وعكس أثرها المالي بدقة ذرية
   Future<void> deleteTopUpTransaction({
     required AppUser manager,
     required BoxTransaction txDoc,
   }) async {
     if (!manager.isManager) {
-      throw StateError('حذف عمليات التعبئة متاح للمدير فقط');
+      throw StateError('حذف عمليات الصندوق متاح للمدير فقط');
     }
     final managerId = manager.effectiveManagerId;
     final txRef = _firestore.collection('box_transactions').doc(txDoc.id);
 
     double deletedAmount = txDoc.amount;
+    double deletedSignedDelta = txDoc.effectiveSignedDelta;
     String deletedMonthKey = txDoc.monthKey;
     String? deletedGovName = txDoc.governorateName;
     String? deletedDelegateName = txDoc.delegateName;
@@ -705,17 +964,30 @@ class BoxesRepository {
       // 1) جميع القراءات أولاً
       final txSnap = await tx.get(txRef);
       if (!txSnap.exists || txSnap.data() == null) {
-        throw StateError('عملية التعبئة غير موجودة أو تم حذفها مسبقاً');
+        throw StateError('العملية غير موجودة أو تم حذفها مسبقاً');
       }
       final data = txSnap.data()!;
       deletedType = BoxTransactionType.fromString(data['type'] as String?);
-      if (deletedType != BoxTransactionType.companyTopUp &&
-          deletedType != BoxTransactionType.governorateTopUp &&
-          deletedType != BoxTransactionType.delegateVirtualTopUp) {
-        throw StateError('هذه الحركة ليست عملية تعبئة قابلة للحذف من هنا');
+      const allowedTypes = [
+        BoxTransactionType.companyTopUp,
+        BoxTransactionType.governorateTopUp,
+        BoxTransactionType.delegateVirtualTopUp,
+        BoxTransactionType.delegateVirtualWithdraw,
+        BoxTransactionType.delegateVirtualAdjustment,
+      ];
+      if (!allowedTypes.contains(deletedType)) {
+        throw StateError('هذه الحركة ليست قابلة للحذف من هنا');
       }
 
       deletedAmount = ((data['amount'] ?? txDoc.amount) as num).toDouble();
+      final storedSigned = (data['signedDelta'] as num?)?.toDouble();
+      if (deletedType == BoxTransactionType.delegateVirtualWithdraw) {
+        deletedSignedDelta = -deletedAmount;
+      } else if (deletedType == BoxTransactionType.delegateVirtualAdjustment) {
+        deletedSignedDelta = storedSigned ?? deletedAmount;
+      } else {
+        deletedSignedDelta = deletedAmount;
+      }
       deletedMonthKey = (data['monthKey'] as String?) ?? txDoc.monthKey;
       final govId = (data['governorateId'] as String?) ?? '';
       deletedGovName = data['governorateName'] as String?;
@@ -747,7 +1019,9 @@ class BoxesRepository {
         govBoxSnap = await tx.get(govBoxRef);
       }
 
-      if (deletedType == BoxTransactionType.delegateVirtualTopUp &&
+      if ((deletedType == BoxTransactionType.delegateVirtualTopUp ||
+              deletedType == BoxTransactionType.delegateVirtualWithdraw ||
+              deletedType == BoxTransactionType.delegateVirtualAdjustment) &&
           delegateId.isNotEmpty) {
         delegateRef = _firestore.collection('users').doc(delegateId);
         delegateSnap = await tx.get(delegateRef);
@@ -795,7 +1069,7 @@ class BoxesRepository {
             ((delegateSnap.data()!['virtualBoxBalance'] ?? 0) as num)
                 .toDouble();
         tx.update(delegateRef, {
-          'virtualBoxBalance': prevVirtual - deletedAmount,
+          'virtualBoxBalance': prevVirtual - deletedSignedDelta,
         });
       }
 

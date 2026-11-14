@@ -35,7 +35,7 @@ class _ManagerBoxesScreenState extends ConsumerState<ManagerBoxesScreen> {
           (t) =>
               t.type == BoxTransactionType.companyTopUp ||
               t.type == BoxTransactionType.governorateTopUp ||
-              t.type == BoxTransactionType.delegateVirtualTopUp,
+              t.isDelegateVirtualTx,
         )
         .toList();
     final governorates = ref.watch(governoratesProvider).value ?? const [];
@@ -217,11 +217,30 @@ class _ManagerBoxesScreenState extends ConsumerState<ManagerBoxesScreen> {
                           tx.type == BoxTransactionType.companyTopUp;
                       final isGovTopUp =
                           tx.type == BoxTransactionType.governorateTopUp;
-                      final typeLabel = isCompany
-                          ? l10n.tr('company_topup')
-                          : isGovTopUp
-                              ? l10n.tr('topup_governorate')
-                              : l10n.tr('topup_delegate');
+                      final isEditableDelegateTx = tx.type ==
+                              BoxTransactionType.delegateVirtualTopUp ||
+                          tx.type == BoxTransactionType.delegateVirtualWithdraw;
+                      final isPositive = tx.effectiveSignedDelta >= 0;
+                      final txColor = isPositive
+                          ? AppTheme.successColor
+                          : AppTheme.dangerColor;
+                      final sign = isPositive ? '+' : '-';
+
+                      String typeLabel;
+                      if (isCompany) {
+                        typeLabel = l10n.tr('company_topup');
+                      } else if (isGovTopUp) {
+                        typeLabel = l10n.tr('topup_governorate');
+                      } else if (tx.type ==
+                          BoxTransactionType.delegateVirtualWithdraw) {
+                        typeLabel = l10n.tr('delegate_virtual_withdraw');
+                      } else if (tx.type ==
+                          BoxTransactionType.delegateVirtualAdjustment) {
+                        typeLabel = l10n.tr('delegate_virtual_adjustment');
+                      } else {
+                        typeLabel = l10n.tr('topup_delegate');
+                      }
+
                       final targetParts = <String>[
                         typeLabel,
                         if ((tx.governorateName ?? '').isNotEmpty)
@@ -236,18 +255,19 @@ class _ManagerBoxesScreenState extends ConsumerState<ManagerBoxesScreen> {
                         margin: EdgeInsets.zero,
                         child: ListTile(
                           leading: CircleAvatar(
-                            backgroundColor: AppTheme.successColor
-                                .withValues(alpha: 0.12),
-                            child: const Icon(
-                              Icons.arrow_downward_rounded,
-                              color: AppTheme.successColor,
+                            backgroundColor: txColor.withValues(alpha: 0.12),
+                            child: Icon(
+                              isPositive
+                                  ? Icons.arrow_downward_rounded
+                                  : Icons.arrow_upward_rounded,
+                              color: txColor,
                             ),
                           ),
                           title: Row(
                             children: [
                               Expanded(
                                 child: Text(
-                                  '${tx.monthKey} • +${AppFormatters.formatMoney(tx.amount)} ${l10n.tr('currency')}',
+                                  '${tx.monthKey} • $sign${AppFormatters.formatMoney(tx.amount)} ${l10n.tr('currency')}',
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -291,6 +311,16 @@ class _ManagerBoxesScreenState extends ConsumerState<ManagerBoxesScreen> {
                                     ref: ref,
                                     existingTransaction: tx,
                                   ),
+                                )
+                              else if (isEditableDelegateTx)
+                                IconButton(
+                                  tooltip: l10n.tr('edit_delegate_tx'),
+                                  icon: const Icon(Icons.edit_outlined),
+                                  onPressed: () => openEditDelegateBoxTxDialog(
+                                    context: context,
+                                    ref: ref,
+                                    existingTransaction: tx,
+                                  ),
                                 ),
                               IconButton(
                                 tooltip: l10n.tr('delete_topup'),
@@ -312,7 +342,13 @@ class _ManagerBoxesScreenState extends ConsumerState<ManagerBoxesScreen> {
                                     ref: ref,
                                     existingTransaction: tx,
                                   )
-                              : null,
+                              : isEditableDelegateTx
+                                  ? () => openEditDelegateBoxTxDialog(
+                                        context: context,
+                                        ref: ref,
+                                        existingTransaction: tx,
+                                      )
+                                  : null,
                         ),
                       );
                     }).toList(),
@@ -394,11 +430,21 @@ Future<bool> confirmAndDeleteTopUpTransaction(
       '${l10n.tr('delegate_name')}: ${txDoc.delegateName}',
   ].join('\n');
 
+  final isDelegateCustomTx =
+      txDoc.type == BoxTransactionType.delegateVirtualWithdraw ||
+          txDoc.type == BoxTransactionType.delegateVirtualAdjustment;
+
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dCtx) => AlertDialog(
-      title: Text(l10n.tr('delete_topup')),
-      content: Text('${l10n.tr('delete_topup_confirm')}\n\n$targetInfo'),
+      title: Text(
+        isDelegateCustomTx
+            ? l10n.tr('delete')
+            : l10n.tr('delete_topup'),
+      ),
+      content: Text(
+        '${isDelegateCustomTx ? l10n.tr('delete_delegate_tx_confirm') : l10n.tr('delete_topup_confirm')}\n\n$targetInfo',
+      ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dCtx, false),
@@ -1241,4 +1287,118 @@ class _MonthlyBoxCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// نافذة تعديل حركة تعبئة أو سحب سابقة على الصندوق الافتراضي للمندوب
+Future<void> openEditDelegateBoxTxDialog({
+  required BuildContext context,
+  required WidgetRef ref,
+  required BoxTransaction existingTransaction,
+}) async {
+  final l10n = AppLocalizations.of(context);
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final parsed = ServerTimeService.parseMonthKey(existingTransaction.monthKey);
+  int selectedYear = parsed.year;
+  int selectedMonth = parsed.month;
+  final amountCtrl = TextEditingController(
+    text: existingTransaction.amount.toStringAsFixed(0),
+  );
+  final notesCtrl =
+      TextEditingController(text: existingTransaction.notes ?? '');
+  final formKey = GlobalKey<FormState>();
+  final nowYear = DateTime.now().year;
+  bool busy = false;
+
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setState) => AlertDialog(
+        title: Text(
+          '${l10n.tr('edit_delegate_tx')} • ${existingTransaction.delegateName ?? ''}',
+        ),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 300, maxWidth: 440),
+          child: SingleChildScrollView(
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  MonthYearSelectorRow(
+                    selectedYear: selectedYear,
+                    selectedMonth: selectedMonth,
+                    maxYear: nowYear + 1,
+                    onYearChanged: (y) => setState(() => selectedYear = y),
+                    onMonthChanged: (m) => setState(() => selectedMonth = m),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: amountCtrl,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      labelText: l10n.tr('amount'),
+                      suffixText: l10n.tr('currency'),
+                    ),
+                    validator: (v) {
+                      final n = double.tryParse(v?.trim() ?? '');
+                      return (n == null || n <= 0)
+                          ? l10n.tr('required_field')
+                          : null;
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: notesCtrl,
+                    decoration: InputDecoration(labelText: l10n.tr('notes')),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: busy ? null : () => Navigator.pop(ctx),
+            child: Text(l10n.tr('cancel')),
+          ),
+          FilledButton(
+            onPressed: busy
+                ? null
+                : () async {
+                    if (!formKey.currentState!.validate()) return;
+                    final manager = ref.read(currentUserProfileProvider).value;
+                    if (manager == null) return;
+                    setState(() => busy = true);
+                    try {
+                      final newMonthKey = ServerTimeService.toMonthKey(
+                        DateTime(selectedYear, selectedMonth, 1),
+                      );
+                      await ref
+                          .read(boxesRepositoryProvider)
+                          .editDelegateVirtualTransaction(
+                            manager: manager,
+                            oldTx: existingTransaction,
+                            newMonthKey: newMonthKey,
+                            newAmount: double.parse(amountCtrl.text.trim()),
+                            notes: notesCtrl.text.trim(),
+                          );
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      messenger?.showSnackBar(
+                        SnackBar(
+                          content: Text(l10n.tr('delegate_balance_updated')),
+                        ),
+                      );
+                    } catch (e) {
+                      messenger?.showSnackBar(SnackBar(content: Text('$e')));
+                    } finally {
+                      if (ctx.mounted) setState(() => busy = false);
+                    }
+                  },
+            child: Text(l10n.tr('save')),
+          ),
+        ],
+      ),
+    ),
+  );
 }

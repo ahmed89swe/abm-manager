@@ -159,18 +159,19 @@ class MonthlyBoxDetailScreen extends ConsumerWidget {
                     maxColumns: 2,
                     twoColumnsBreakpoint: 760,
                     children: transactions.map((tx) {
-                      final isTopUp =
-                          tx.type == BoxTransactionType.companyTopUp ||
-                              tx.type == BoxTransactionType.governorateTopUp ||
-                              tx.type ==
-                                  BoxTransactionType.delegateVirtualTopUp;
+                      final isCredit = tx.effectiveSignedDelta >= 0;
                       final color =
-                          isTopUp ? AppTheme.successColor : AppTheme.dangerColor;
-                      final sign = isTopUp ? '+' : '-';
+                          isCredit ? AppTheme.successColor : AppTheme.dangerColor;
+                      final sign = isCredit ? '+' : '-';
 
                       final isCompanyTopUp =
                           tx.type == BoxTransactionType.companyTopUp;
-                      final isDeletableTopUp = isTopUp &&
+                      final isEditableDelegateTx = tx.type ==
+                              BoxTransactionType.delegateVirtualTopUp ||
+                          tx.type == BoxTransactionType.delegateVirtualWithdraw;
+                      final isDeletableTopUp = (isCompanyTopUp ||
+                              tx.type == BoxTransactionType.governorateTopUp ||
+                              tx.isDelegateVirtualTx) &&
                           (user?.isManager ?? false);
                       final isEditableCompanyTopUp =
                           isCompanyTopUp && (user?.isManager ?? false);
@@ -181,7 +182,7 @@ class MonthlyBoxDetailScreen extends ConsumerWidget {
                           leading: CircleAvatar(
                             backgroundColor: color.withValues(alpha: 0.12),
                             child: Icon(
-                              isTopUp
+                              isCredit
                                   ? Icons.arrow_downward_rounded
                                   : Icons.arrow_upward_rounded,
                               color: color,
@@ -245,6 +246,18 @@ class MonthlyBoxDetailScreen extends ConsumerWidget {
                                     existingTransaction: tx,
                                   ),
                                 ),
+                              ] else if (isEditableDelegateTx &&
+                                  (user?.isManager ?? false)) ...[
+                                const SizedBox(width: 4),
+                                IconButton(
+                                  tooltip: l10n.tr('edit_delegate_tx'),
+                                  icon: const Icon(Icons.edit_outlined, size: 20),
+                                  onPressed: () => openEditDelegateBoxTxDialog(
+                                    context: context,
+                                    ref: ref,
+                                    existingTransaction: tx,
+                                  ),
+                                ),
                               ],
                               if (isDeletableTopUp) ...[
                                 IconButton(
@@ -270,7 +283,14 @@ class MonthlyBoxDetailScreen extends ConsumerWidget {
                                     ref: ref,
                                     existingTransaction: tx,
                                   )
-                              : null,
+                              : (isEditableDelegateTx &&
+                                      (user?.isManager ?? false))
+                                  ? () => openEditDelegateBoxTxDialog(
+                                        context: context,
+                                        ref: ref,
+                                        existingTransaction: tx,
+                                      )
+                                  : null,
                         ),
                       );
                     }).toList(),
@@ -291,6 +311,10 @@ class MonthlyBoxDetailScreen extends ConsumerWidget {
         return isAr ? 'تعبئة صندوق المحافظة' : 'Governorate Box Top-Up';
       case BoxTransactionType.delegateVirtualTopUp:
         return isAr ? 'تعبئة مندوب' : 'Delegate Top-Up';
+      case BoxTransactionType.delegateVirtualWithdraw:
+        return isAr ? 'سحب من صندوق المندوب' : 'Delegate Box Withdrawal';
+      case BoxTransactionType.delegateVirtualAdjustment:
+        return isAr ? 'تعديل رصيد المندوب' : 'Delegate Balance Adjustment';
       case BoxTransactionType.invoicePayment:
         return isAr ? 'تسديد فاتورة' : 'Invoice Payment';
       case BoxTransactionType.personalExpense:

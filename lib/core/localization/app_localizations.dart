@@ -227,6 +227,25 @@ class AppLocalizations {
         'فعّل إذا كانت تعبئة جديدة من الشركة؛ عطّله للتخصيص الداخلي فقط',
     'delegate_pay_box_hint': 'سيتم الخصم من صندوق المحافظة للشهر المقابل',
     'edit_topup': 'تعديل التعبئة',
+    'search_invoices_hint': 'ابحث باسم الطبيب أو الصيدلية أو المادة...',
+    'no_search_results': 'لا توجد فواتير مطابقة لبحثك',
+    'delegate_invoices_by_month': 'فواتيري حسب الأشهر',
+    'tap_month_to_view_invoices': 'اختر شهراً لعرض فواتيره أو ابحث مباشرة بالأعلى',
+    'withdraw_delegate_balance': 'سحب / تعديل الرصيد',
+    'withdraw_from_delegate': 'سحب من الرصيد',
+    'edit_delegate_balance': 'تعديل الرصيد المباشر',
+    'withdraw_amount': 'المبلغ المسحوب',
+    'new_balance': 'الرصيد الجديد',
+    'delegate_box_history': 'سجل صندوق المندوب',
+    'delegate_withdraw_success': 'تم سحب المبلغ من صندوق المندوب بنجاح',
+    'delegate_balance_updated': 'تم تحديث رصيد صندوق المندوب بنجاح',
+    'delegate_virtual_withdraw': 'سحب من صندوق المندوب',
+    'delegate_virtual_adjustment': 'تعديل رصيد صندوق المندوب',
+    'edit_delegate_tx': 'تعديل حركة صندوق المندوب',
+    'delete_delegate_tx_confirm':
+        'هل أنت متأكد من حذف هذه الحركة؟ سيتم عكس أثرها على رصيد صندوق المندوب تلقائياً.',
+    'delegate_pay_date_box_hint':
+        'سيتم الخصم من صندوق محافظتك للشهر الموافق لتاريخ الفاتورة',
   };
 
   static const Map<String, String> _en = {
@@ -413,6 +432,25 @@ class AppLocalizations {
         'Keep enabled for new company funding; disable for internal sub-box allocation only',
     'delegate_pay_box_hint': 'Deducts from your governorate box for this month',
     'edit_topup': 'Edit Top-Up',
+    'search_invoices_hint': 'Search by doctor, pharmacy, or material...',
+    'no_search_results': 'No invoices match your search',
+    'delegate_invoices_by_month': 'My Invoices by Month',
+    'tap_month_to_view_invoices': 'Select a month to view its invoices or search above',
+    'withdraw_delegate_balance': 'Withdraw / Adjust',
+    'withdraw_from_delegate': 'Withdraw Balance',
+    'edit_delegate_balance': 'Set Exact Balance',
+    'withdraw_amount': 'Withdrawal Amount',
+    'new_balance': 'New Balance',
+    'delegate_box_history': 'Delegate Box History',
+    'delegate_withdraw_success': 'Amount withdrawn from delegate box',
+    'delegate_balance_updated': 'Delegate box balance updated',
+    'delegate_virtual_withdraw': 'Delegate Box Withdrawal',
+    'delegate_virtual_adjustment': 'Delegate Balance Adjustment',
+    'edit_delegate_tx': 'Edit Delegate Transaction',
+    'delete_delegate_tx_confirm':
+        'Delete this transaction? Its effect on the delegate box balance will be reversed automatically.',
+    'delegate_pay_date_box_hint':
+        'Deducts from your governorate box for the invoice date month',
   };
 }
 

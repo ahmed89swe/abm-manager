@@ -411,9 +411,7 @@ void _openPayInvoiceDialog(
   PickedImageData? receiptImage;
   bool busy = false;
 
-  final String delegateDeductMonth = invoice.invoiceMonthKey.isNotEmpty
-      ? invoice.invoiceMonthKey
-      : ServerTimeService.toMonthKey(invoice.invoiceDate);
+  final String delegateDeductMonth = invoice.invoiceDateMonthKey;
 
   showDialog(
     context: context,
@@ -507,7 +505,7 @@ void _openPayInvoiceDialog(
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              '${l10n.tr('delegate_pay_box_hint')}: ${invoice.governorateName} • ${AppFormatters.formatMonthLabel(delegateDeductMonth, isAr: l10n.isAr)}',
+                              '${l10n.tr('delegate_pay_date_box_hint')}: ${(user.governorateName ?? '').isNotEmpty ? user.governorateName! : invoice.governorateName} • ${AppFormatters.formatMonthLabel(delegateDeductMonth, isAr: l10n.isAr)}',
                               style: Theme.of(ctx)
                                   .textTheme
                                   .bodySmall
@@ -706,5 +704,44 @@ Future<bool> confirmAndDeleteInvoice(
   } catch (e) {
     messenger?.showSnackBar(SnackBar(content: Text('$e')));
     return false;
+  }
+}
+
+/// حقل بحث موحد ضمن الفواتير (طبيب، صيدلية، مادة، مذخر، رقم فاتورة)
+class InvoiceSearchBar extends StatelessWidget {
+  const InvoiceSearchBar({
+    super.key,
+    required this.controller,
+    required this.query,
+    required this.onChanged,
+    required this.onClear,
+    this.hintText,
+  });
+
+  final TextEditingController controller;
+  final String query;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+  final String? hintText;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return TextField(
+      controller: controller,
+      onChanged: onChanged,
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        hintText: hintText ?? l10n.tr('search_invoices_hint'),
+        prefixIcon: const Icon(Icons.search_rounded),
+        suffixIcon: query.isEmpty
+            ? null
+            : IconButton(
+                onPressed: onClear,
+                icon: const Icon(Icons.close_rounded),
+              ),
+        isDense: true,
+      ),
+    );
   }
 }

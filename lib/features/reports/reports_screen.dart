@@ -74,16 +74,8 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       }
       if (_statusFilter == 'paid' && !inv.isPaid) return false;
       if (_statusFilter == 'unpaid' && inv.isPaid) return false;
-      if (queryText.isNotEmpty) {
-        final haystack = [
-          inv.invoiceNumber,
-          inv.doctorName ?? '',
-          inv.pharmacyName ?? '',
-          inv.warehouseName ?? '',
-          inv.notes ?? '',
-          ...inv.items.map((i) => i.materialName),
-        ].join(' ').toLowerCase();
-        if (!haystack.contains(queryText)) return false;
+      if (queryText.isNotEmpty && !inv.matchesSearchQuery(queryText)) {
+        return false;
       }
       return true;
     }).toList();

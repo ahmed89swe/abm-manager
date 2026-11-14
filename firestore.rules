@@ -279,7 +279,14 @@ service cloud.firestore {
               request.resource.data.amount is number &&
               request.resource.data.amount > 0 &&
               request.resource.data.diff(resource.data).affectedKeys()
-                .hasOnly(['monthKey', 'amount', 'governorateId', 'governorateName', 'notes', 'editedByUid', 'editedByName', 'updatedAt']))
+                .hasOnly(['monthKey', 'amount', 'governorateId', 'governorateName', 'notes', 'editedByUid', 'editedByName', 'updatedAt'])) ||
+            (resource.data.type in ['delegate_virtual_topup', 'delegate_virtual_withdraw'] &&
+              request.resource.data.type == resource.data.type &&
+              request.resource.data.managerId == currentManagerId() &&
+              request.resource.data.amount is number &&
+              request.resource.data.amount > 0 &&
+              request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['monthKey', 'amount', 'signedDelta', 'notes', 'editedByUid', 'editedByName', 'updatedAt']))
           ));
       allow delete: if isLegacyMigrationActive() ||
         (isManager() &&
@@ -289,6 +296,8 @@ service cloud.firestore {
             'company_topup',
             'governorate_topup',
             'delegate_virtual_topup',
+            'delegate_virtual_withdraw',
+            'delegate_virtual_adjustment',
             'invoice_payment',
             'invoice_edit_adjustment'
           ]);

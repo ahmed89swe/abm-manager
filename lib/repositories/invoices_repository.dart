@@ -543,12 +543,14 @@ class InvoicesRepository {
     }
 
     final trustedNow = await ServerTimeService.instance.getTrustedNow();
+    final invoiceDateMonth = ServerTimeService.toMonthKey(invoice.invoiceDate);
     final fallbackMonth = invoice.invoiceMonthKey.isNotEmpty
         ? invoice.invoiceMonthKey
-        : ServerTimeService.toMonthKey(invoice.invoiceDate);
+        : invoiceDateMonth;
+    // خصم المندوب يعتمد دائماً على شهر تاريخ الفاتورة في صندوق محافظته
     final deductMonthKey = actor.isManager
         ? (managerSelectedDeductMonthKey ?? fallbackMonth)
-        : fallbackMonth;
+        : invoiceDateMonth;
     final parsedMonth = ServerTimeService.parseMonthKey(deductMonthKey);
 
     final effectiveGovId =

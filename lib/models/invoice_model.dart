@@ -170,6 +170,39 @@ class InvoiceModel {
           ? deductedManagerMonthKey!
           : invoiceMonthKey;
 
+  /// Returns the YYYY-MM month key derived directly from [invoiceDate].
+  String get invoiceDateMonthKey =>
+      '${invoiceDate.year.toString().padLeft(4, '0')}-${invoiceDate.month.toString().padLeft(2, '0')}';
+
+  /// Matches free-text search queries across doctor, pharmacy, warehouse, materials, invoice number, and notes.
+  bool matchesSearchQuery(String query) {
+    final normalizedQuery = _normalizeSearchText(query);
+    if (normalizedQuery.isEmpty) return true;
+    final tokens =
+        normalizedQuery.split(RegExp(r'\s+')).where((t) => t.isNotEmpty);
+    final materialsText = items.map((i) => i.materialName).join(' ');
+    final haystack = _normalizeSearchText([
+      invoiceNumber,
+      doctorName,
+      pharmacyName,
+      warehouseName,
+      governorateName,
+      assignedDelegateName ?? '',
+      notes ?? '',
+      materialsText,
+    ].join(' '));
+    return tokens.every(haystack.contains);
+  }
+
+  static String _normalizeSearchText(String input) {
+    return input
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[أإآ]'), 'ا')
+        .replaceAll('ى', 'ي')
+        .replaceAll('ة', 'ه');
+  }
+
   factory InvoiceModel.fromMap(Map<String, dynamic> map, String id) {
     final rawItems = List<Map<String, dynamic>>.from(map['items'] ?? const []);
     final items = rawItems.map(InvoiceItem.fromMap).toList();

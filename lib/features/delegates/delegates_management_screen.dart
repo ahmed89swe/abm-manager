@@ -6,10 +6,12 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../models/app_user.dart';
 import '../../models/master_data_models.dart';
+import '../../models/monthly_box.dart';
 import '../../providers/app_providers.dart';
 import '../../widgets/common_widgets.dart';
 import '../../widgets/month_year_picker.dart';
 import '../../widgets/user_avatar_widget.dart';
+import '../boxes/manager_boxes_screen.dart';
 
 class DelegatesManagementScreen extends ConsumerStatefulWidget {
   const DelegatesManagementScreen({super.key});
@@ -243,7 +245,41 @@ class _DelegatesManagementScreenState
                                     Icons.account_balance_wallet_outlined,
                                     size: 18,
                                   ),
-                                  label: Text(l10n.tr('topup_delegate')),
+                                  label: Text(
+                                    l10n.tr('topup_delegate'),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () =>
+                                      _openWithdrawOrAdjustDialog(d),
+                                  icon: const Icon(
+                                    Icons.tune_rounded,
+                                    size: 18,
+                                  ),
+                                  label: Text(
+                                    l10n.tr('withdraw_delegate_balance'),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextButton.icon(
+                                  onPressed: () =>
+                                      _showDelegateBoxHistorySheet(d),
+                                  icon: const Icon(
+                                    Icons.history_rounded,
+                                    size: 18,
+                                  ),
+                                  label: Text(l10n.tr('delegate_box_history')),
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -371,6 +407,403 @@ class _DelegatesManagementScreenState
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _openWithdrawOrAdjustDialog(AppUser delegate) {
+    final l10n = AppLocalizations.of(context);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final inputCtrl = TextEditingController();
+    final notesCtrl = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    final nowDate = DateTime.now();
+    int selectedYear = nowDate.year;
+    int selectedMonth = nowDate.month;
+    String mode = 'withdraw'; // withdraw | adjust
+    bool busy = false;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) {
+          final parsedVal = double.tryParse(inputCtrl.text.trim()) ?? 0;
+          final resultingBalance = mode == 'withdraw'
+              ? (delegate.virtualBoxBalance - parsedVal)
+              : parsedVal;
+          final delta = resultingBalance - delegate.virtualBoxBalance;
+
+          return AlertDialog(
+            title: Text(
+              '${l10n.tr('withdraw_delegate_balance')}: ${delegate.name}',
+            ),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 300, maxWidth: 440),
+              child: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SegmentedButton<String>(
+                        segments: [
+                          ButtonSegment(
+                            value: 'withdraw',
+                            icon: const Icon(Icons.remove_circle_outline),
+                            label: Text(l10n.tr('withdraw_from_delegate')),
+                          ),
+                          ButtonSegment(
+                            value: 'adjust',
+                            icon: const Icon(Icons.edit_outlined),
+                            label: Text(l10n.tr('edit_delegate_balance')),
+                          ),
+                        ],
+                        selected: {mode},
+                        onSelectionChanged: (sel) {
+                          setState(() {
+                            mode = sel.first;
+                            if (mode == 'adjust') {
+                              inputCtrl.text =
+                                  delegate.virtualBoxBalance.toStringAsFixed(0);
+                            } else {
+                              inputCtrl.clear();
+                            }
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Theme.of(ctx)
+                              .colorScheme
+                              .primary
+                              .withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${l10n.tr('current_balance')}: ${AppFormatters.formatMoney(delegate.virtualBoxBalance, currency: l10n.tr('currency'))}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${l10n.tr('new_balance')}: ${AppFormatters.formatMoney(resultingBalance, currency: l10n.tr('currency'))} (${delta >= 0 ? '+' : ''}${AppFormatters.formatMoney(delta)})',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: resultingBalance < 0
+                                    ? AppTheme.dangerColor
+                                    : AppTheme.successColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      MonthYearSelectorRow(
+                        selectedYear: selectedYear,
+                        selectedMonth: selectedMonth,
+                        maxYear: nowDate.year + 1,
+                        onYearChanged: (y) => setState(() => selectedYear = y),
+                        onMonthChanged: (m) =>
+                            setState(() => selectedMonth = m),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: inputCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                          signed: true,
+                        ),
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
+                          labelText: mode == 'withdraw'
+                              ? l10n.tr('withdraw_amount')
+                              : l10n.tr('new_balance'),
+                          suffixText: l10n.tr('currency'),
+                        ),
+                        validator: (v) {
+                          final n = double.tryParse(v?.trim() ?? '');
+                          if (n == null) return l10n.tr('required_field');
+                          if (mode == 'withdraw' && n <= 0) {
+                            return l10n.tr('required_field');
+                          }
+                          if (mode == 'adjust' &&
+                              (n - delegate.virtualBoxBalance).abs() < 0.0001) {
+                            return l10n.isAr
+                                ? 'الرصيد الجديد مطابق للرصيد الحالي'
+                                : 'New balance matches current balance';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: notesCtrl,
+                        decoration: InputDecoration(
+                          labelText: l10n.tr('notes'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: busy ? null : () => Navigator.pop(ctx),
+                child: Text(l10n.tr('cancel')),
+              ),
+              FilledButton(
+                onPressed: busy
+                    ? null
+                    : () async {
+                        if (!formKey.currentState!.validate()) return;
+                        final manager =
+                            ref.read(currentUserProfileProvider).value;
+                        if (manager == null) return;
+                        setState(() => busy = true);
+                        try {
+                          final monthKey = ServerTimeService.toMonthKey(
+                            DateTime(selectedYear, selectedMonth, 1),
+                          );
+                          final val = double.parse(inputCtrl.text.trim());
+                          final repo = ref.read(boxesRepositoryProvider);
+                          if (mode == 'withdraw') {
+                            await repo.withdrawFromDelegateVirtualBox(
+                              manager: manager,
+                              delegate: delegate,
+                              amount: val,
+                              monthKeyOverride: monthKey,
+                              notes: notesCtrl.text.trim(),
+                            );
+                          } else {
+                            await repo.adjustDelegateVirtualBalance(
+                              manager: manager,
+                              delegate: delegate,
+                              newBalance: val,
+                              monthKeyOverride: monthKey,
+                              notes: notesCtrl.text.trim(),
+                            );
+                          }
+                          if (ctx.mounted) Navigator.pop(ctx);
+                          messenger?.showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                mode == 'withdraw'
+                                    ? l10n.tr('delegate_withdraw_success')
+                                    : l10n.tr('delegate_balance_updated'),
+                              ),
+                            ),
+                          );
+                        } catch (e) {
+                          messenger?.showSnackBar(SnackBar(content: Text('$e')));
+                        } finally {
+                          if (ctx.mounted) setState(() => busy = false);
+                        }
+                      },
+                child: Text(l10n.tr('confirm')),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showDelegateBoxHistorySheet(AppUser delegate) {
+    final l10n = AppLocalizations.of(context);
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sCtx) => Consumer(
+        builder: (sCtx, sRef, _) {
+          final delegates = sRef.watch(delegatesProvider).value ?? const [];
+          final liveDelegate = delegates.firstWhere(
+            (d) => d.uid == delegate.uid,
+            orElse: () => delegate,
+          );
+          final allTx =
+              sRef.watch(allBoxTransactionsProvider).value ?? const [];
+          final delegateTxs = allTx
+              .where(
+                (t) => t.delegateId == delegate.uid && t.isDelegateVirtualTx,
+              )
+              .toList();
+
+          return DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.65,
+            minChildSize: 0.4,
+            maxChildSize: 0.92,
+            builder: (_, scrollCtrl) => Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${l10n.tr('delegate_box_history')} • ${liveDelegate.name}',
+                              style: Theme.of(sCtx)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w800),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${l10n.tr('current_balance')}: ${AppFormatters.formatMoney(liveDelegate.virtualBoxBalance, currency: l10n.tr('currency'))}',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: liveDelegate.virtualBoxBalance < 0
+                                    ? AppTheme.dangerColor
+                                    : AppTheme.successColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(sCtx),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: delegateTxs.isEmpty
+                      ? EmptyStateWidget(
+                          icon: Icons.history_rounded,
+                          message: l10n.tr('no_data'),
+                        )
+                      : ListView.separated(
+                          controller: scrollCtrl,
+                          padding: const EdgeInsets.all(16),
+                          itemCount: delegateTxs.length,
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(height: 8),
+                          itemBuilder: (_, idx) {
+                            final tx = delegateTxs[idx];
+                            final isPositive = tx.effectiveSignedDelta >= 0;
+                            final color = isPositive
+                                ? AppTheme.successColor
+                                : AppTheme.dangerColor;
+                            final sign = isPositive ? '+' : '-';
+                            final isEditable =
+                                tx.type ==
+                                        BoxTransactionType
+                                            .delegateVirtualTopUp ||
+                                    tx.type ==
+                                        BoxTransactionType
+                                            .delegateVirtualWithdraw;
+
+                            final title = tx.type ==
+                                    BoxTransactionType.delegateVirtualWithdraw
+                                ? l10n.tr('delegate_virtual_withdraw')
+                                : tx.type ==
+                                        BoxTransactionType
+                                            .delegateVirtualAdjustment
+                                    ? l10n.tr('delegate_virtual_adjustment')
+                                    : l10n.tr('topup_delegate');
+
+                            return Card(
+                              margin: EdgeInsets.zero,
+                              child: ListTile(
+                                leading: CircleAvatar(
+                                  backgroundColor:
+                                      color.withValues(alpha: 0.12),
+                                  child: Icon(
+                                    isPositive
+                                        ? Icons.arrow_downward_rounded
+                                        : Icons.arrow_upward_rounded,
+                                    color: color,
+                                  ),
+                                ),
+                                title: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '$title • $sign${AppFormatters.formatMoney(tx.amount)}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                    if (tx.isEdited)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: AppTheme.warningColor
+                                              .withValues(alpha: 0.15),
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                        ),
+                                        child: Text(
+                                          l10n.tr('edited_label'),
+                                          style: const TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w700,
+                                            color: AppTheme.warningColor,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                subtitle: Text(
+                                  '${tx.monthKey}${tx.notes != null && tx.notes!.isNotEmpty ? " • ${tx.notes}" : ""}\n${tx.createdAt != null ? AppFormatters.formatDate(tx.createdAt!, includeTime: true) : ""}',
+                                ),
+                                isThreeLine: true,
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (isEditable)
+                                      IconButton(
+                                        tooltip: l10n.tr('edit_delegate_tx'),
+                                        icon: const Icon(Icons.edit_outlined),
+                                        onPressed: () =>
+                                            openEditDelegateBoxTxDialog(
+                                          context: sCtx,
+                                          ref: sRef,
+                                          existingTransaction: tx,
+                                        ),
+                                      ),
+                                    IconButton(
+                                      tooltip: l10n.tr('delete'),
+                                      icon: const Icon(
+                                        Icons.delete_outline_rounded,
+                                        color: AppTheme.dangerColor,
+                                      ),
+                                      onPressed: () =>
+                                          confirmAndDeleteTopUpTransaction(
+                                        sCtx,
+                                        sRef,
+                                        tx,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }

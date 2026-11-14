@@ -282,5 +282,118 @@ void main() {
       expect(parsed.monthKey, '2026-11');
       expect(parsed.totalDeductions, 150000);
     });
+
+    test('InvoiceModel matchesSearchQuery matches doctor, pharmacy, warehouse, and material names', () {
+      final invoice = InvoiceModel(
+        id: 'inv_search',
+        managerId: 'm1',
+        invoiceNumber: 'INV-202607-AB12C',
+        governorateId: 'baghdad',
+        governorateName: 'بغداد',
+        doctorName: 'د. أحمد كريم',
+        pharmacyName: 'صيدلية الشفاء المركزي',
+        warehouseName: 'مذخر الرافدين',
+        items: const [
+          InvoiceItem(
+            materialId: 'mat1',
+            materialName: 'بانادول اكسترا 500',
+            quantity: 2,
+            unitPrice: 5000,
+          ),
+          InvoiceItem(
+            materialId: 'mat2',
+            materialName: 'أوجمنتين 1جم',
+            quantity: 1,
+            unitPrice: 15000,
+          ),
+        ],
+        totalAmount: 25000,
+        isPricePending: false,
+        status: InvoiceStatus.unpaid,
+        assignmentType: InvoiceAssignmentType.specificDelegate,
+        assignedDelegateId: 'd1',
+        assignedDelegateName: 'يوسف اسماعيل',
+        createdByUid: 'm1',
+        createdByName: 'Manager',
+        createdByRole: 'manager',
+        invoiceDate: DateTime(2026, 7, 14),
+        invoiceMonthKey: '2026-07',
+      );
+
+      expect(invoice.invoiceDateMonthKey, '2026-07');
+      expect(invoice.matchesSearchQuery(''), isTrue);
+      expect(invoice.matchesSearchQuery('احمد'), isTrue); // Arabic alef normalization
+      expect(invoice.matchesSearchQuery('أحمد كريم'), isTrue);
+      expect(invoice.matchesSearchQuery('الشفاء'), isTrue);
+      expect(invoice.matchesSearchQuery('بانادول'), isTrue);
+      expect(invoice.matchesSearchQuery('اوجمنتين'), isTrue);
+      expect(invoice.matchesSearchQuery('الرافدين'), isTrue);
+      expect(invoice.matchesSearchQuery('احمد بانادول'), isTrue);
+      expect(invoice.matchesSearchQuery('AB12C'), isTrue);
+      expect(invoice.matchesSearchQuery('أموكسيسيلين'), isFalse);
+    });
+
+    test('BoxTransaction supports delegateVirtualWithdraw, delegateVirtualAdjustment & signedDelta', () {
+      expect(
+        BoxTransactionType.delegateVirtualWithdraw.firestoreValue,
+        'delegate_virtual_withdraw',
+      );
+      expect(
+        BoxTransactionType.delegateVirtualAdjustment.firestoreValue,
+        'delegate_virtual_adjustment',
+      );
+      expect(
+        BoxTransactionType.fromString('delegate_virtual_withdraw'),
+        BoxTransactionType.delegateVirtualWithdraw,
+      );
+      expect(
+        BoxTransactionType.fromString('delegate_virtual_adjustment'),
+        BoxTransactionType.delegateVirtualAdjustment,
+      );
+
+      final withdrawTx = BoxTransaction.fromMap({
+        'managerId': 'm1',
+        'type': 'delegate_virtual_withdraw',
+        'monthKey': '2026-11',
+        'amount': 75000,
+        'signedDelta': -75000,
+        'delegateId': 'd1',
+        'delegateName': 'يوسف',
+        'performedByUid': 'm1',
+        'performedByName': 'Ameer',
+        'performedByRole': 'manager',
+      }, 'tx_w1');
+
+      expect(withdrawTx.isDelegateVirtualTx, isTrue);
+      expect(withdrawTx.effectiveSignedDelta, -75000);
+      expect(withdrawTx.toMap()['signedDelta'], -75000);
+
+      final adjustDownTx = BoxTransaction.fromMap({
+        'managerId': 'm1',
+        'type': 'delegate_virtual_adjustment',
+        'monthKey': '2026-11',
+        'amount': 120000,
+        'signedDelta': -120000,
+        'delegateId': 'd1',
+        'performedByUid': 'm1',
+        'performedByName': 'Ameer',
+        'performedByRole': 'manager',
+      }, 'tx_a1');
+      expect(adjustDownTx.isDelegateVirtualTx, isTrue);
+      expect(adjustDownTx.effectiveSignedDelta, -120000);
+
+      final adjustUpTx = BoxTransaction.fromMap({
+        'managerId': 'm1',
+        'type': 'delegate_virtual_adjustment',
+        'monthKey': '2026-11',
+        'amount': 40000,
+        'signedDelta': 40000,
+        'delegateId': 'd1',
+        'performedByUid': 'm1',
+        'performedByName': 'Ameer',
+        'performedByRole': 'manager',
+      }, 'tx_a2');
+      expect(adjustUpTx.effectiveSignedDelta, 40000);
+    });
   });
 }

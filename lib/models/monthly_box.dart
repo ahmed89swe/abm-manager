@@ -186,6 +186,8 @@ enum BoxTransactionType {
   companyTopUp,
   governorateTopUp,
   delegateVirtualTopUp,
+  delegateVirtualWithdraw,
+  delegateVirtualAdjustment,
   invoicePayment,
   personalExpense,
   invoiceEditAdjustment;
@@ -198,6 +200,10 @@ enum BoxTransactionType {
         return BoxTransactionType.governorateTopUp;
       case 'delegate_virtual_topup':
         return BoxTransactionType.delegateVirtualTopUp;
+      case 'delegate_virtual_withdraw':
+        return BoxTransactionType.delegateVirtualWithdraw;
+      case 'delegate_virtual_adjustment':
+        return BoxTransactionType.delegateVirtualAdjustment;
       case 'invoice_payment':
         return BoxTransactionType.invoicePayment;
       case 'personal_expense':
@@ -217,6 +223,10 @@ enum BoxTransactionType {
         return 'governorate_topup';
       case BoxTransactionType.delegateVirtualTopUp:
         return 'delegate_virtual_topup';
+      case BoxTransactionType.delegateVirtualWithdraw:
+        return 'delegate_virtual_withdraw';
+      case BoxTransactionType.delegateVirtualAdjustment:
+        return 'delegate_virtual_adjustment';
       case BoxTransactionType.invoicePayment:
         return 'invoice_payment';
       case BoxTransactionType.personalExpense:
@@ -234,6 +244,7 @@ class BoxTransaction {
     required this.type,
     required this.monthKey,
     required this.amount,
+    this.signedDelta,
     required this.performedByUid,
     required this.performedByName,
     required this.performedByRole,
@@ -254,6 +265,7 @@ class BoxTransaction {
   final BoxTransactionType type;
   final String monthKey;
   final double amount;
+  final double? signedDelta;
   final String performedByUid;
   final String performedByName;
   final String performedByRole;
@@ -270,6 +282,28 @@ class BoxTransaction {
 
   bool get isEdited => updatedAt != null;
 
+  bool get isDelegateVirtualTx =>
+      type == BoxTransactionType.delegateVirtualTopUp ||
+      type == BoxTransactionType.delegateVirtualWithdraw ||
+      type == BoxTransactionType.delegateVirtualAdjustment;
+
+  /// الأثر الفعلي الموقّع على الرصيد (موجب للإضافة وسالب للسحب/الخصم).
+  double get effectiveSignedDelta {
+    switch (type) {
+      case BoxTransactionType.companyTopUp:
+      case BoxTransactionType.governorateTopUp:
+      case BoxTransactionType.delegateVirtualTopUp:
+        return amount;
+      case BoxTransactionType.delegateVirtualWithdraw:
+      case BoxTransactionType.invoicePayment:
+      case BoxTransactionType.personalExpense:
+        return -amount;
+      case BoxTransactionType.delegateVirtualAdjustment:
+      case BoxTransactionType.invoiceEditAdjustment:
+        return signedDelta ?? amount;
+    }
+  }
+
   factory BoxTransaction.fromMap(Map<String, dynamic> map, String id) {
     return BoxTransaction(
       id: id,
@@ -277,6 +311,7 @@ class BoxTransaction {
       type: BoxTransactionType.fromString(map['type'] as String?),
       monthKey: (map['monthKey'] ?? '') as String,
       amount: ((map['amount'] ?? 0) as num).toDouble(),
+      signedDelta: (map['signedDelta'] as num?)?.toDouble(),
       performedByUid: (map['performedByUid'] ?? '') as String,
       performedByName: (map['performedByName'] ?? '') as String,
       performedByRole: (map['performedByRole'] ?? 'manager') as String,
@@ -299,6 +334,7 @@ class BoxTransaction {
       'type': type.firestoreValue,
       'monthKey': monthKey,
       'amount': amount,
+      if (signedDelta != null) 'signedDelta': signedDelta,
       'performedByUid': performedByUid,
       'performedByName': performedByName,
       'performedByRole': performedByRole,

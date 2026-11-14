@@ -33,6 +33,14 @@ class _GovernorateMonthDetailScreenState
     extends ConsumerState<GovernorateMonthDetailScreen> {
   String _selectedGroupFilter = 'all';
   String _statusFilter = 'all'; // all | unpaid | paid
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -72,8 +80,12 @@ class _GovernorateMonthDetailScreenState
     final unpaidCount = rawMonthInvoices.where((i) => !i.isPaid).length;
 
     final monthInvoices = rawMonthInvoices.where((inv) {
-      if (_statusFilter == 'paid') return inv.isPaid;
-      if (_statusFilter == 'unpaid') return !inv.isPaid;
+      if (_statusFilter == 'paid' && !inv.isPaid) return false;
+      if (_statusFilter == 'unpaid' && inv.isPaid) return false;
+      if (_searchQuery.trim().isNotEmpty &&
+          !inv.matchesSearchQuery(_searchQuery)) {
+        return false;
+      }
       return true;
     }).toList();
 
@@ -164,6 +176,17 @@ class _GovernorateMonthDetailScreenState
               ),
             ),
             const SizedBox(height: 16),
+
+            InvoiceSearchBar(
+              controller: _searchCtrl,
+              query: _searchQuery,
+              onChanged: (v) => setState(() => _searchQuery = v),
+              onClear: () {
+                _searchCtrl.clear();
+                setState(() => _searchQuery = '');
+              },
+            ),
+            const SizedBox(height: 12),
 
             // فلتر الحالة (الكل / على الانتظار / مسددة)
             Wrap(
